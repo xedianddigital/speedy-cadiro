@@ -445,7 +445,9 @@ class LiveEngine {
     this.cache(listing, conn.search)
     this.emit({ type: "listing", listing })
 
-    if (!settings.autoTravelEnabled || !conn.search.autoTravel) return
+    // Auto-travel is the whole point of the app - always on. "Pause" on the
+    // search is how the user stops being moved.
+    if (!conn.search.autoTravel) return
     if (!listing.whisperToken) return
     if (Date.now() < this.travelPausedUntil) return
 

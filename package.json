@@ -1,6 +1,6 @@
 {
   "name": "poe-trade-notifier",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "description": "Local live-search notifier for Path of Exile trade",
   "author": "xedianddigital",

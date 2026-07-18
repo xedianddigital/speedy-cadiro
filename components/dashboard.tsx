@@ -103,16 +103,6 @@ export function Dashboard() {
           <section className="rounded-lg border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">Settings</h2>
 
-            <label className="flex items-center justify-between gap-3 py-1.5 text-xs">
-              <span className="font-medium">Auto-travel</span>
-              <input
-                type="checkbox"
-                checked={settings.autoTravelEnabled}
-                onChange={(e) => patchSettings({ autoTravelEnabled: e.target.checked })}
-                className="size-4 accent-emerald-500"
-              />
-            </label>
-
             <div className="py-1.5">
               <div className="flex items-center justify-between gap-3 text-xs">
                 <span>Travel interval</span>
@@ -180,11 +170,7 @@ export function Dashboard() {
 
         <div className="space-y-3">
           <CooldownBar until={feed.cooldownUntil} totalMs={settings.autoTravelCooldownMs} />
-          <CurrentListing
-            listing={current}
-            autoTravelEnabled={settings.autoTravelEnabled}
-            onWhisperState={feed.setWhisperState}
-          />
+          <CurrentListing listing={current} onWhisperState={feed.setWhisperState} />
         </div>
       </div>
     </main>

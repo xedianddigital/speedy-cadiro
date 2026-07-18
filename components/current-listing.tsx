@@ -10,11 +10,9 @@ import type { Listing, WhisperState } from "@/lib/poe/types"
 
 export function CurrentListing({
   listing,
-  autoTravelEnabled,
   onWhisperState,
 }: {
   listing: Listing | null
-  autoTravelEnabled: boolean
   onWhisperState: (id: string, state: WhisperState) => void
 }) {
   if (!listing) {
@@ -22,21 +20,19 @@ export function CurrentListing({
       <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-border p-10 text-center">
         <p className="text-sm font-medium text-muted-foreground">Watching for a match…</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          The next matching listing appears here, and {autoTravelEnabled ? "you'll be taken to the seller automatically" : "you can travel with one click"}.
+          The next matching listing appears here, and you&apos;re taken to the seller automatically.
         </p>
       </div>
     )
   }
-  return <Card listing={listing} autoTravelEnabled={autoTravelEnabled} onWhisperState={onWhisperState} />
+  return <Card listing={listing} onWhisperState={onWhisperState} />
 }
 
 function Card({
   listing,
-  autoTravelEnabled,
   onWhisperState,
 }: {
   listing: Listing
-  autoTravelEnabled: boolean
   onWhisperState: (id: string, state: WhisperState) => void
 }) {
   const [error, setError] = useState<string | null>(null)
@@ -116,7 +112,7 @@ function Card({
 
         <div className="flex items-center gap-3">
           <Button size="sm" onClick={travel} disabled={listing.whisperState === "sending"}>
-            {label(listing.whisperState, autoTravelEnabled)}
+            {label(listing.whisperState)}
           </Button>
           {listing.corrupted && <span className="text-xs text-destructive">corrupted</span>}
           <TokenTtl expMs={listing.tokenExpMs} />
@@ -128,7 +124,7 @@ function Card({
   )
 }
 
-function label(state: WhisperState, autoTravelEnabled: boolean): string {
+function label(state: WhisperState): string {
   switch (state) {
     case "sending":
       return "Travelling…"
@@ -139,7 +135,7 @@ function label(state: WhisperState, autoTravelEnabled: boolean): string {
     case "expired":
       return "Listing gone"
     default:
-      return autoTravelEnabled ? "Travel again" : "Travel to hideout"
+      return "Travel again"
   }
 }
 

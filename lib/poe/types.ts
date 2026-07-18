@@ -33,8 +33,6 @@ export interface WatchedSearch {
 }
 
 export interface Settings {
-  /** Master switch for auto-travel. When false, listings are shown but not travelled to. */
-  autoTravelEnabled: boolean
   /**
    * The travel interval / listing lifecycle: after travelling to a listing, wait
    * this long before fetching and travelling to the next one. This is the whole
@@ -87,7 +85,6 @@ export interface AppConfig {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  autoTravelEnabled: true,
   autoTravelCooldownMs: 30_000,
   instantBuyoutOnly: true,
   soundEnabled: true,

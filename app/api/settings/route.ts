@@ -11,7 +11,6 @@ export async function GET(): Promise<Response> {
 }
 
 interface SettingsPatch {
-  autoTravelEnabled?: boolean
   autoTravelCooldownMs?: number
   soundEnabled?: boolean
   instantBuyoutOnly?: boolean
@@ -29,7 +28,6 @@ export async function PATCH(req: Request): Promise<Response> {
   }
 
   const patch: SettingsPatch = {}
-  if (typeof body.autoTravelEnabled === "boolean") patch.autoTravelEnabled = body.autoTravelEnabled
   if (typeof body.soundEnabled === "boolean") patch.soundEnabled = body.soundEnabled
   if (typeof body.instantBuyoutOnly === "boolean") patch.instantBuyoutOnly = body.instantBuyoutOnly
 
