@@ -19,6 +19,11 @@ export function Dashboard() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS)
   /** null while we're still asking the server. */
   const [sessionReady, setSessionReady] = useState<boolean | null>(null)
+  const [version, setVersion] = useState<string | null>(null)
+
+  useEffect(() => {
+    void window.poeDesktop?.version().then(setVersion)
+  }, [])
 
   const feed = useLiveFeed(settings.soundEnabled)
 
@@ -52,7 +57,10 @@ export function Dashboard() {
     <main className="mx-auto max-w-6xl px-4 py-6">
       <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold">PoE Trade Notifier</h1>
+          <h1 className="text-lg font-semibold">
+            PoE Trade Notifier
+            {version && <span className="ml-2 text-xs font-normal text-muted-foreground">v{version}</span>}
+          </h1>
           <p className="text-xs text-muted-foreground">
             Runs locally. Your cookies never leave this machine.
           </p>

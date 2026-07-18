@@ -5,10 +5,10 @@
 // accept connections before showing a window, so the user never sees a blank
 // page or a "connection refused" error.
 
-const { app, BrowserWindow, ipcMain, session, shell, dialog } = require('electron')
+const { app, BrowserWindow, Menu, ipcMain, session, shell, dialog } = require('electron')
 const path = require('node:path')
 const http = require('node:http')
-const { fork } = require('node:child_process')
+const { fork, spawn } = require('node:child_process')
 
 /**
  * Cookies live in their own persistent partition so a login survives restarts
@@ -105,21 +105,12 @@ async function startServer() {
 async function runLogin() {
   const ses = session.fromPartition(POE_PARTITION)
 
-  // Electron's default agent advertises "Electron/x" and the app name, which
-  // Cloudflare may challenge or refuse. Present the ordinary Chrome agent for
-  // the Chromium actually embedded here - it is the honest version string, just
-  // without the tokens that mark this as an embedded browser. The clearance is
-  // issued against this agent and we store the same one, so they stay matched.
-  const chromeMajor = (process.versions.chrome || '140').split('.')[0]
-  const platformToken =
-    process.platform === 'win32'
-      ? 'Windows NT 10.0; Win64; x64'
-      : process.platform === 'darwin'
-        ? 'Macintosh; Intel Mac OS X 10_15_7'
-        : 'X11; Linux x86_64'
-  const browserUA = `Mozilla/5.0 (${platformToken}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeMajor}.0.0.0 Safari/537.36`
-  ses.setUserAgent(browserUA)
-
+  // Do NOT override the User-Agent here. Spoofing a plain Chrome agent while
+  // Chromium still sends its own Sec-CH-UA client hints (which name Electron)
+  // produces a contradiction Cloudflare detects, and its check then loops
+  // forever without ever issuing a clearance. Leaving the default agent alone
+  // keeps the request internally consistent; whatever it is, it is what the
+  // clearance gets issued against, and it is what we store.
   const win = new BrowserWindow({
     width: 1000,
     height: 820,
@@ -127,7 +118,7 @@ async function runLogin() {
     autoHideMenuBar: true,
     webPreferences: { partition: POE_PARTITION, nodeIntegration: false, contextIsolation: true },
   })
-  win.webContents.setUserAgent(browserUA)
+  const browserUA = win.webContents.getUserAgent()
 
   const readCookies = async () => {
     const jar = await ses.cookies.get({ domain: '.pathofexile.com' })
@@ -216,6 +207,82 @@ function postJson(url, body) {
   })
 }
 
+/**
+ * Launch the platform uninstaller and quit.
+ *
+ * electron-builder's NSIS target leaves "Uninstall <ProductName>.exe" beside the
+ * installed binary. It has to run detached: it deletes this very executable, so
+ * it cannot be a child that dies with us.
+ */
+async function runUninstall() {
+  const { response } = await dialog.showMessageBox({
+    type: 'warning',
+    buttons: ['Uninstall', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: 'Uninstall PoE Trade Notifier',
+    message: 'Uninstall PoE Trade Notifier?',
+    detail:
+      'The app will close and the uninstaller will open. Your saved session and settings are kept, so reinstalling restores them.',
+  })
+  if (response !== 0) return { ok: false, cancelled: true }
+
+  if (process.platform !== 'win32') {
+    await dialog.showMessageBox({
+      type: 'info',
+      title: 'Uninstall',
+      message: 'Nothing to uninstall',
+      detail:
+        'This build is a portable AppImage - delete the .AppImage file to remove it. Settings live in ~/.config/poe-trade-notifier.',
+    })
+    return { ok: false, unsupported: true }
+  }
+
+  const uninstaller = path.join(path.dirname(process.execPath), 'Uninstall PoE Trade Notifier.exe')
+  try {
+    spawn(uninstaller, [], { detached: true, stdio: 'ignore' }).unref()
+  } catch (err) {
+    dialog.showErrorBox('Uninstall failed', `Could not start the uninstaller: ${err.message}`)
+    return { ok: false, error: String(err.message) }
+  }
+
+  app.isQuiting = true
+  setTimeout(() => app.quit(), 500)
+  return { ok: true }
+}
+
+function buildMenu() {
+  const template = [
+    {
+      label: 'File',
+      submenu: [
+        ...(process.platform === 'win32'
+          ? [{ label: 'Uninstall…', click: () => void runUninstall() }, { type: 'separator' }]
+          : []),
+        { role: 'quit' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }],
+    },
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'Project page',
+          click: () => shell.openExternal('https://github.com/xedianddigital/poe-trade-notifier'),
+        },
+        {
+          label: `Version ${app.getVersion()}`,
+          enabled: false,
+        },
+      ],
+    },
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -266,6 +333,9 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
 
+  ipcMain.handle('poe:version', () => app.getVersion())
+  ipcMain.handle('poe:uninstall', () => runUninstall())
+
   ipcMain.handle('poe:login', async () => {
     try {
       return await runLogin()
@@ -277,6 +347,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     try {
       baseUrl = await startServer()
+      buildMenu()
       createWindow()
     } catch (err) {
       dialog.showErrorBox('Failed to start', String(err && err.message ? err.message : err))

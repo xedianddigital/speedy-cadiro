@@ -12,6 +12,8 @@ declare global {
   interface Window {
     poeDesktop?: {
       isDesktop: boolean
+      version: () => Promise<string>
+      uninstall: () => Promise<{ ok: boolean }>
       login: () => Promise<{ ok: boolean; valid: boolean; reason?: string; found?: string[] }>
     }
   }
@@ -173,25 +175,6 @@ export function SessionPanel({
         <h2 className="text-sm font-semibold">Session</h2>
         <StatusPill info={info} />
       </div>
-
-      {info?.configured && (
-        <dl className="mb-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <dt>Cookies</dt>
-          <dd className="font-mono">
-            {[
-              info.has?.poesessid && "POESESSID",
-              info.has?.poetoken && "POETOKEN",
-              info.has?.cfClearance && "cf_clearance",
-            ]
-              .filter(Boolean)
-              .join(" · ") || "none"}
-          </dd>
-          <dt>User-Agent</dt>
-          <dd className="truncate font-mono" title={info.userAgent}>
-            {info.userAgent || "—"}
-          </dd>
-        </dl>
-      )}
 
       {notice && (
         <p

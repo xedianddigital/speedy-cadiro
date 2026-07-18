@@ -1,9 +1,11 @@
 name: Build installers
 
 on:
-  # Tag a release (v0.1.0) to publish installers, or run manually from the
-  # Actions tab to get a downloadable artifact without cutting a release.
+  # Every push to master produces downloadable artifacts for fast iteration.
+  # Pushing a tag (v0.2.0) additionally publishes a permanent GitHub Release.
   push:
+    branches:
+      - master
     tags:
       - 'v*'
   workflow_dispatch:
@@ -60,7 +62,9 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
+          # Version and commit in the name so a downloaded build is traceable to
+          # the code that produced it.
+          name: ${{ matrix.artifact }}-${{ github.sha }}
           path: ${{ matrix.path }}
           if-no-files-found: error
 

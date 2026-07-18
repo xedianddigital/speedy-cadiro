@@ -76,6 +76,8 @@ interface Connection {
    * reconnecting on every cooldown is exactly the pattern that earns a 1013.
    */
   pausedUntil: number
+  /** Which cookie set this connection is currently presenting. */
+  cookieVariant: CookieVariant
 }
 
 interface CachedListing {
@@ -183,6 +185,7 @@ class LiveEngine {
       flushTimer: null,
       fetching: false,
       pausedUntil: 0,
+      cookieVariant: "full",
     }
     this.connections.set(search.id, conn)
     await this.connect(conn)
@@ -223,7 +226,7 @@ class LiveEngine {
     try {
       ws = new WebSocket(url, {
         headers: {
-          Cookie: cookieHeader(session),
+          Cookie: cookieHeader(session, conn.cookieVariant),
           "User-Agent": session.userAgent || "poe-lean-notifier/1.0",
           Origin: "https://www.pathofexile.com",
         },
@@ -238,7 +241,10 @@ class LiveEngine {
 
     ws.on("open", () => {
       this.setStatus(conn, "connected")
-      this.log("info", `Live search connected: ${conn.search.title}`)
+      this.log(
+        "info",
+        `Live search connected: ${conn.search.title} (${describeVariant(conn.cookieVariant)})`,
+      )
 
       // Don't trust "open" alone - wait for the socket to prove it survives.
       conn.stableTimer = setTimeout(() => {
@@ -298,7 +304,21 @@ class LiveEngine {
     // 1013 (try again later) and 1008 (policy violation) are GGG telling us to
     // stop. Honour that with a real pause rather than the usual ramp.
     const throttled = code === 1013 || code === 1008
-    const delay = throttled ? Math.max(backoff, THROTTLED_MIN_MS) : backoff
+    let delay = throttled ? Math.max(backoff, THROTTLED_MIN_MS) : backoff
+
+    // A policy close often means the cookies themselves are the problem: a
+    // cf_clearance bound to a different browser is rejected, while sending none
+    // is fine. Work down to a smaller cookie set rather than retrying the same
+    // rejected combination forever.
+    if (throttled) {
+      const next = COOKIE_VARIANTS[COOKIE_VARIANTS.indexOf(conn.cookieVariant) + 1]
+      if (next) {
+        conn.cookieVariant = next
+        // The cookies changed, so this isn't the same request being hammered.
+        delay = Math.min(delay, 5_000)
+        this.log("warn", `${conn.search.title}: retrying ${describeVariant(next)}.`)
+      }
+    }
 
     conn.attempts += 1
     if (conn.reconnectTimer) clearTimeout(conn.reconnectTimer)
@@ -488,11 +508,33 @@ class LiveEngine {
   }
 }
 
-function cookieHeader(session: Session): string {
+/**
+ * Cookie sets to try on the live socket, most complete first.
+ *
+ * A cf_clearance is bound to the exact browser that earned it. Presenting one
+ * that doesn't match gets the connection rejected, whereas simply omitting it
+ * is accepted - so when the server keeps closing us with a policy error, drop
+ * cookies rather than keep insisting on the full set.
+ */
+const COOKIE_VARIANTS = ["full", "no-cf", "session-only"] as const
+type CookieVariant = (typeof COOKIE_VARIANTS)[number]
+
+function cookieHeader(session: Session, variant: CookieVariant = "full"): string {
   const parts = [`POESESSID=${session.poesessid}`]
-  if (session.poetoken) parts.push(`POETOKEN=${session.poetoken}`)
-  if (session.cfClearance) parts.push(`cf_clearance=${session.cfClearance}`)
+  if (variant !== "session-only" && session.poetoken) parts.push(`POETOKEN=${session.poetoken}`)
+  if (variant === "full" && session.cfClearance) parts.push(`cf_clearance=${session.cfClearance}`)
   return parts.join("; ")
+}
+
+function describeVariant(variant: CookieVariant): string {
+  switch (variant) {
+    case "no-cf":
+      return "without cf_clearance"
+    case "session-only":
+      return "with POESESSID only"
+    default:
+      return "with all cookies"
+  }
 }
 
 function clampCooldown(ms: number): number {

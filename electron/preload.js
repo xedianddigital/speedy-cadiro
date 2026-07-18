@@ -9,6 +9,12 @@ contextBridge.exposeInMainWorld('poeDesktop', {
   /** True when the UI is running inside the desktop shell. */
   isDesktop: true,
 
+  /** Installed app version, for the UI to display. */
+  version: () => ipcRenderer.invoke('poe:version'),
+
+  /** Run the platform uninstaller, after confirming with the user. */
+  uninstall: () => ipcRenderer.invoke('poe:uninstall'),
+
   /**
    * Open a real browser window on pathofexile.com, wait for the user to log in,
    * then hand the resulting cookies to the local server.
