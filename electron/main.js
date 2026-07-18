@@ -5,7 +5,7 @@
 // accept connections before showing a window, so the user never sees a blank
 // page or a "connection refused" error.
 
-const { app, BrowserWindow, Menu, ipcMain, net, session, shell, dialog } = require('electron')
+const { app, BrowserWindow, Menu, ipcMain, session, shell, dialog } = require('electron')
 const path = require('node:path')
 const http = require('node:http')
 const { fork, spawn } = require('node:child_process')
@@ -136,26 +136,25 @@ async function runLogin() {
     }
   }
 
-  // pathofexile.com sets a *guest* POESESSID before you sign in, and public
-  // endpoints accept it - which is why the window used to close on a session
-  // that then 401'd. /my-account instead redirects to /login unless you are
-  // genuinely authenticated, so a 200 here means login actually completed.
-  const isLoggedIn = () =>
-    new Promise((resolve) => {
-      const req = net.request({
-        method: 'GET',
-        url: 'https://www.pathofexile.com/my-account',
-        session: ses,
-        useSessionCookies: true,
-        redirect: 'manual',
-      })
-      req.on('response', (res) => {
-        res.on('data', () => {})
-        res.on('end', () => resolve(res.statusCode === 200))
-      })
-      req.on('error', () => resolve(false))
-      req.end()
-    })
+  // Detect login from *inside* the window, not with a separate request.
+  //
+  // A separate fetch/net.request has a different fingerprint than the window
+  // that just solved the Cloudflare challenge, so Cloudflare blocks it and the
+  // check never succeeds even though the user is plainly logged in. Asking the
+  // page's own DOM avoids that entirely: pathofexile.com renders a logout link
+  // in its header only when authenticated, and never on the login page or a
+  // Cloudflare challenge screen.
+  const isLoggedIn = async () => {
+    if (win.isDestroyed()) return false
+    try {
+      return await win.webContents.executeJavaScript(
+        `!!document.querySelector('a[href*="/logout"], form[action*="/logout"]')`,
+        true,
+      )
+    } catch {
+      return false
+    }
+  }
 
   return new Promise((resolve) => {
     let settled = false
@@ -174,24 +173,25 @@ async function runLogin() {
     const poll = setInterval(async () => {
       if (win.isDestroyed()) return
       try {
+        // The window's DOM is the authority that the user is logged in.
+        if (!(await isLoggedIn())) return
         const cookies = await readCookies()
         if (!cookies.poesessid) return
-        if (!(await isLoggedIn())) return
 
+        // Store the real cookies with this window's own agent, which is what the
+        // Cloudflare clearance was issued against.
         const res = await postJson(`${baseUrl}/api/session`, {
           ...cookies,
           userAgent: browserUA,
-          // The cookies came from this window, so its Electron agent is the
-          // correct one and must not be replaced.
           trustUserAgent: true,
         })
-        if (res?.valid) {
-          await finish({
-            ok: true,
-            valid: true,
-            found: Object.keys(cookies).filter((k) => cookies[k]),
-          })
-        }
+        // Trust the DOM even if the server's own re-check is momentarily blocked
+        // by Cloudflare; the session is stored either way.
+        await finish({
+          ok: true,
+          valid: res?.valid !== false,
+          found: Object.keys(cookies).filter((k) => cookies[k]),
+        })
       } catch {
         // Keep polling; the user may still be logging in.
       }
