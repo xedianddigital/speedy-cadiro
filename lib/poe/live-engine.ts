@@ -48,7 +48,9 @@ const THROTTLED_MIN_MS = 60_000
 const PING_MS = 30_000
 
 /** /fetch accepts at most 10 ids per call. */
-const FETCH_BATCH = 10
+// One token per fetch: the current protocol delivers one result JWT per
+// message, and result tokens (unlike plain ids) can't be safely comma-batched.
+const FETCH_BATCH = 1
 /** Wait briefly so a burst of ids becomes one batched fetch. */
 const FETCH_DEBOUNCE_MS = 120
 
@@ -222,10 +224,21 @@ class LiveEngine {
     let ws: WebSocket
     try {
       ws = new WebSocket(url, {
+        // Mirror the headers the trade site's own live-search socket sends
+        // (captured from a working browser connection). The exact User-Agent
+        // matters because cf_clearance is bound to it, and the Sec-Fetch-* set
+        // is what marks the upgrade as a legitimate same-origin websocket.
         headers: {
+          Accept: "*/*",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
           Cookie: liveCookieHeader(session),
-          "User-Agent": cleanUserAgent(session.userAgent),
           Origin: "https://www.pathofexile.com",
+          "Sec-Fetch-Dest": "empty",
+          "Sec-Fetch-Mode": "websocket",
+          "Sec-Fetch-Site": "same-origin",
+          "User-Agent": session.userAgent || FALLBACK_UA,
         },
       })
     } catch (err) {
@@ -332,7 +345,7 @@ class LiveEngine {
   // ---- incoming ids -> listings ----
 
   private async onMessage(conn: Connection, raw: string): Promise<void> {
-    let msg: { new?: string[]; auth?: unknown; error?: unknown }
+    let msg: { new?: string[]; result?: unknown; count?: unknown; auth?: unknown; error?: unknown }
     try {
       msg = JSON.parse(raw)
     } catch {
@@ -360,15 +373,23 @@ class LiveEngine {
       this.setStatus(conn, "error", String(msg.error))
       return
     }
-    if (!Array.isArray(msg.new) || msg.new.length === 0) return
 
-    // In auto-travel cooldown: drop the ids entirely. Not fetching them is the
-    // point - it costs zero API calls and stops a burst turning into a flood of
-    // hideout jumps.
+    // GGG's current protocol pushes one result token per message,
+    // {"result":"<jwt>","count":N}. The whole token is passed to /fetch to get
+    // the listing. Older builds sent {"new":["id",...]}; support both. A token
+    // is either kind - /fetch accepts a plain id or a result JWT alike.
+    const tokens: string[] = []
+    if (typeof msg.result === "string") tokens.push(msg.result)
+    else if (Array.isArray(msg.new)) tokens.push(...msg.new.filter((x) => typeof x === "string"))
+    if (tokens.length === 0) return
+
+    // In auto-travel cooldown: drop the tokens entirely. Not fetching them is
+    // the point - it costs zero API calls and stops a burst turning into a flood
+    // of hideout jumps.
     if (Date.now() < conn.pausedUntil) return
 
-    for (const id of msg.new) {
-      if (!this.listings.has(id) && !conn.pending.includes(id)) conn.pending.push(id)
+    for (const token of tokens) {
+      if (!conn.pending.includes(token)) conn.pending.push(token)
     }
     if (conn.flushTimer) return
     conn.flushTimer = setTimeout(() => {
@@ -530,39 +551,21 @@ class LiveEngine {
 
 /**
 /**
- * Cookies for the live socket. Working reference clients send only POESESSID
- * (plus POETOKEN); cf_clearance is neither needed nor sent, and the session
- * authenticates on POESESSID alone.
+ * Cookies for the live socket, matching what the trade site itself sends on its
+ * live-search WebSocket: cf_clearance (required - Cloudflare proxies the socket)
+ * plus POESESSID and POETOKEN. cf_clearance is bound to the exact User-Agent it
+ * was issued against, so it is always sent together with that same agent.
  */
 function liveCookieHeader(session: Session): string {
-  const parts = [`POESESSID=${session.poesessid}`]
+  const parts: string[] = []
+  if (session.poesessid) parts.push(`POESESSID=${session.poesessid}`)
   if (session.poetoken) parts.push(`POETOKEN=${session.poetoken}`)
+  if (session.cfClearance) parts.push(`cf_clearance=${session.cfClearance}`)
   return parts.join("; ")
 }
 
-/**
- * A browser-shaped User-Agent for outbound PoE requests.
- *
- * Electron bakes the app's own product name and an "Electron/x" token into its
- * default agent (e.g. "... poe-trade-notifier/0.2.0 ... Electron/43.1.1 ...").
- * GGG's live search accepts the session and then closes the connection with a
- * 1008 policy violation when the agent advertises an automated client like
- * that. Strip those tokens so the agent reads as an ordinary browser, matching
- * what a real trade tab sends.
- */
 const FALLBACK_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
-
-function cleanUserAgent(ua: string | undefined): string {
-  if (!ua) return FALLBACK_UA
-  const cleaned = ua
-    .replace(/\s*Electron\/[\d.]+/gi, "")
-    .replace(/\s*poe-[a-z-]+\/[\d.]+/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .trim()
-  // Only trust the cleaned value if it still looks like a real browser agent.
-  return /Chrome\/\d|Firefox\/\d|Safari\/\d/.test(cleaned) ? cleaned : FALLBACK_UA
-}
 
 function clampCooldown(ms: number): number {
   return Math.min(AUTO_TRAVEL_COOLDOWN_MAX_MS, Math.max(AUTO_TRAVEL_COOLDOWN_MIN_MS, ms))
