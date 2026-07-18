@@ -5,7 +5,15 @@ import { SessionPanel } from "@/components/session-panel"
 import { SearchPanel } from "@/components/search-panel"
 import { ListingFeed } from "@/components/listing-feed"
 import { useLiveFeed } from "@/components/use-live-feed"
-import { DEFAULT_SETTINGS, type Settings } from "@/lib/poe/types"
+import {
+  AUTO_TRAVEL_COOLDOWN_MAX_MS,
+  AUTO_TRAVEL_COOLDOWN_MIN_MS,
+  BUFFER_SIZE_MAX,
+  BUFFER_SIZE_MIN,
+  DEFAULT_SETTINGS,
+  MAX_ACTIVE_SEARCHES,
+  type Settings,
+} from "@/lib/poe/types"
 
 export function Dashboard() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS)
@@ -68,7 +76,11 @@ export function Dashboard() {
         <div className="space-y-4">
           <SessionPanel key={sessionKey} onChanged={() => setSessionKey((k) => k + 1)} />
 
-          <SearchPanel statuses={feed.statuses} autoTravelEnabled={settings.autoTravelEnabled} />
+          <SearchPanel
+            statuses={feed.statuses}
+            cooldowns={feed.cooldowns}
+            autoTravelEnabled={settings.autoTravelEnabled}
+          />
 
           <section className="rounded-lg border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">Settings</h2>
@@ -86,17 +98,55 @@ export function Dashboard() {
               />
             </label>
 
+            <div className="py-1">
+              <div className="flex items-center justify-between gap-3 text-xs">
+                <span>Pause after travel</span>
+                <span className="text-muted-foreground">
+                  {Math.round(settings.autoTravelCooldownMs / 1000)}s
+                </span>
+              </div>
+              <input
+                type="range"
+                min={AUTO_TRAVEL_COOLDOWN_MIN_MS / 1000}
+                max={AUTO_TRAVEL_COOLDOWN_MAX_MS / 1000}
+                step={1}
+                value={Math.round(settings.autoTravelCooldownMs / 1000)}
+                onChange={(e) =>
+                  patchSettings({ autoTravelCooldownMs: Number(e.target.value) * 1000 })
+                }
+                className="mt-1 w-full accent-amber-500"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                After an auto-travel, new listings are ignored for this long.
+              </p>
+            </div>
+
             <label className="flex items-center justify-between gap-3 py-1 text-xs">
-              <span>Cooldown per search</span>
+              <span>
+                Feed size
+                <span className="ml-1.5 text-muted-foreground">(manual travel)</span>
+              </span>
+              <input
+                type="number"
+                min={BUFFER_SIZE_MIN}
+                max={BUFFER_SIZE_MAX}
+                step={1}
+                value={settings.bufferSize}
+                onChange={(e) => patchSettings({ bufferSize: Number(e.target.value) })}
+                className="w-16 rounded-md border border-input bg-background px-2 py-1 text-right text-xs outline-none focus:ring-2 focus:ring-ring"
+              />
+            </label>
+
+            <label className="flex items-center justify-between gap-3 py-1 text-xs">
+              <span>Listing lifetime</span>
               <span className="flex items-center gap-1">
                 <input
                   type="number"
-                  min={1}
-                  step={1}
-                  value={Math.round(settings.autoTravelCooldownMs / 1000)}
-                  onChange={(e) =>
-                    patchSettings({ autoTravelCooldownMs: Number(e.target.value) * 1000 })
-                  }
+                  min={30}
+                  max={900}
+                  step={30}
+                  value={Math.round(settings.listingTtlMs / 1000)}
+                  onChange={(e) => patchSettings({ listingTtlMs: Number(e.target.value) * 1000 })}
                   className="w-16 rounded-md border border-input bg-background px-2 py-1 text-right text-xs outline-none focus:ring-2 focus:ring-ring"
                 />
                 <span className="text-muted-foreground">s</span>
@@ -147,9 +197,16 @@ export function Dashboard() {
         <div>
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-sm font-semibold">Feed</h2>
-            <span className="text-xs text-muted-foreground">{feed.listings.length} listings</span>
+            <span className="text-xs text-muted-foreground">
+              {feed.listings.length}/{settings.bufferSize} · expire after{" "}
+              {Math.round(settings.listingTtlMs / 60000)}m
+            </span>
           </div>
-          <ListingFeed listings={feed.listings} onWhisperState={feed.setWhisperState} />
+          <ListingFeed
+            listings={feed.listings}
+            onWhisperState={feed.setWhisperState}
+            listingTtlMs={settings.listingTtlMs}
+          />
         </div>
       </div>
     </main>

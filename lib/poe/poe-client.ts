@@ -6,6 +6,7 @@
 
 import type { Listing, Session } from "./types"
 import { tokenExpiryMs } from "./jwt"
+import { rateLimiter } from "./rate-limit"
 
 const BASE = "https://www.pathofexile.com"
 
@@ -49,6 +50,18 @@ function detectAuthFailure(status: number, body: string): void {
   }
 }
 
+/**
+ * Every call to pathofexile.com goes through here: paced by the shared limiter
+ * and fed back into it so the published budget drives the next call's timing.
+ */
+async function paced(url: string, init: RequestInit): Promise<Response> {
+  return rateLimiter.schedule(async () => {
+    const res = await fetch(url, init)
+    rateLimiter.observe(res)
+    return res
+  })
+}
+
 function retryAfterMs(res: Response): number {
   // PoE returns X-Rate-Limit-* headers; fall back to Retry-After seconds.
   const retryAfter = res.headers.get("Retry-After")
@@ -62,7 +75,7 @@ function retryAfterMs(res: Response): number {
 /** Validate the stored session by hitting a lightweight authenticated endpoint. */
 export async function validateSession(session: Session): Promise<{ ok: boolean; account?: string; reason?: string }> {
   try {
-    const res = await fetch(`${BASE}/api/trade/data/leagues`, {
+    const res = await paced(`${BASE}/api/trade/data/leagues`, {
       headers: baseHeaders(session),
       cache: "no-store",
     })
@@ -167,11 +180,13 @@ export async function fetchListings(
   const referer = `${BASE}/trade/search/${encodeURIComponent(league)}/${searchId}`
   const url = `${BASE}/api/trade/fetch/${batch.join(",")}?query=${searchId}&realm=pc`
 
-  const res = await fetch(url, { headers: baseHeaders(session, referer), cache: "no-store" })
+  const res = await paced(url, { headers: baseHeaders(session, referer), cache: "no-store" })
   const text = await res.text()
 
   if (res.status === 429) {
-    throw new RateLimitError("Rate limited by trade fetch.", retryAfterMs(res))
+    const wait = retryAfterMs(res)
+    rateLimiter.penalise(wait)
+    throw new RateLimitError("Rate limited by trade fetch.", wait)
   }
   detectAuthFailure(res.status, text)
   if (!res.ok) throw new Error(`fetch failed: ${res.status}`)
@@ -216,7 +231,7 @@ export async function sendWhisper(
     league && searchId
       ? `${BASE}/trade/search/${encodeURIComponent(league)}/${searchId}`
       : `${BASE}/trade`
-  const res = await fetch(`${BASE}/api/trade/whisper`, {
+  const res = await paced(`${BASE}/api/trade/whisper`, {
     method: "POST",
     headers: {
       ...baseHeaders(session, referer),
@@ -227,7 +242,11 @@ export async function sendWhisper(
   })
   const text = await res.text()
 
-  if (res.status === 429) throw new RateLimitError("Rate limited on whisper.", retryAfterMs(res))
+  if (res.status === 429) {
+    const wait = retryAfterMs(res)
+    rateLimiter.penalise(wait)
+    throw new RateLimitError("Rate limited on whisper.", wait)
+  }
   detectAuthFailure(res.status, text)
   if (!res.ok) {
     // Common: 404/400 when the token has expired.

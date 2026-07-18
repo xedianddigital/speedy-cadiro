@@ -8,8 +8,8 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Listing, SearchStatus, ServerEvent, WhisperState } from "@/lib/poe/types"
 
-/** Cap the rendered feed; the server keeps its own larger cache. */
-const FEED_MAX = 200
+// The server owns the buffer: it evicts on size and expires on TTL, and tells
+// us via `expire`. The client just mirrors that.
 
 export interface LogLine {
   id: number
@@ -21,6 +21,8 @@ export interface LogLine {
 export interface LiveFeed {
   listings: Listing[]
   statuses: Record<string, SearchStatus>
+  /** searchInternalId -> unix ms when its auto-travel cooldown ends. */
+  cooldowns: Record<string, number>
   logs: LogLine[]
   connected: boolean
   sessionValid: boolean | null
@@ -31,6 +33,7 @@ export interface LiveFeed {
 export function useLiveFeed(soundEnabled: boolean): LiveFeed {
   const [listings, setListings] = useState<Listing[]>([])
   const [statuses, setStatuses] = useState<Record<string, SearchStatus>>({})
+  const [cooldowns, setCooldowns] = useState<Record<string, number>>({})
   const [logs, setLogs] = useState<LogLine[]>([])
   const [connected, setConnected] = useState(false)
   const [sessionValid, setSessionValid] = useState<boolean | null>(null)
@@ -63,16 +66,25 @@ export function useLiveFeed(soundEnabled: boolean): LiveFeed {
 
       switch (event.type) {
         case "snapshot":
-          setListings(event.listings.slice(0, FEED_MAX))
+          setListings(event.listings)
           setStatuses(event.statuses)
           break
 
         case "listing":
+          // Newest first; the server caps how many survive.
           setListings((prev) => {
             if (prev.some((l) => l.id === event.listing.id)) return prev
-            return [event.listing, ...prev].slice(0, FEED_MAX)
+            return [event.listing, ...prev]
           })
           if (soundRef.current) beep()
+          break
+
+        case "expire":
+          setListings((prev) => prev.filter((l) => l.id !== event.listingId))
+          break
+
+        case "cooldown":
+          setCooldowns((prev) => ({ ...prev, [event.searchInternalId]: event.until }))
           break
 
         case "status":
@@ -108,7 +120,16 @@ export function useLiveFeed(soundEnabled: boolean): LiveFeed {
     return () => source.close()
   }, [])
 
-  return { listings, statuses, logs, connected, sessionValid, sessionMessage, setWhisperState }
+  return {
+    listings,
+    statuses,
+    cooldowns,
+    logs,
+    connected,
+    sessionValid,
+    sessionMessage,
+    setWhisperState,
+  }
 }
 
 /** Short notification tone. WebAudio avoids shipping an audio asset. */

@@ -9,9 +9,11 @@ import type { SearchStatus, WatchedSearch } from "@/lib/poe/types"
 
 export function SearchPanel({
   statuses,
+  cooldowns,
   autoTravelEnabled,
 }: {
   statuses: Record<string, SearchStatus>
+  cooldowns: Record<string, number>
   autoTravelEnabled: boolean
 }) {
   const [searches, setSearches] = useState<WatchedSearch[]>([])
@@ -121,6 +123,8 @@ export function SearchPanel({
                   <StatusDot status={status} />
                 </div>
 
+                <CooldownBanner until={cooldowns[s.id]} />
+
                 <div className="flex flex-wrap items-center gap-2">
                   <Button size="sm" variant="outline" onClick={() => patch(s.id, { active: !s.active })}>
                     {s.active ? "Pause" : "Resume"}
@@ -168,6 +172,27 @@ export function SearchPanel({
         </ul>
       )}
     </section>
+  )
+}
+
+/** Shown while auto-travel has scanning suspended for this search. */
+function CooldownBanner({ until }: { until?: number }) {
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!until || until <= Date.now()) return
+    const t = setInterval(() => setNow(Date.now()), 250)
+    return () => clearInterval(t)
+  }, [until])
+
+  if (!until) return null
+  const left = until - now
+  if (left <= 0) return null
+
+  return (
+    <p className="mb-2 rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-400">
+      Travelled — scanning paused {(left / 1000).toFixed(1)}s
+    </p>
   )
 }
 

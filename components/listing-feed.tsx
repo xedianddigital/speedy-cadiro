@@ -13,9 +13,11 @@ import type { Listing, WhisperState } from "@/lib/poe/types"
 export function ListingFeed({
   listings,
   onWhisperState,
+  listingTtlMs,
 }: {
   listings: Listing[]
   onWhisperState: (id: string, state: WhisperState) => void
+  listingTtlMs: number
 }) {
   if (listings.length === 0) {
     return (
@@ -31,7 +33,12 @@ export function ListingFeed({
   return (
     <ul className="space-y-2">
       {listings.map((listing) => (
-        <ListingCard key={listing.id} listing={listing} onWhisperState={onWhisperState} />
+        <ListingCard
+          key={listing.id}
+          listing={listing}
+          onWhisperState={onWhisperState}
+          listingTtlMs={listingTtlMs}
+        />
       ))}
     </ul>
   )
@@ -40,9 +47,11 @@ export function ListingFeed({
 function ListingCard({
   listing,
   onWhisperState,
+  listingTtlMs,
 }: {
   listing: Listing
   onWhisperState: (id: string, state: WhisperState) => void
+  listingTtlMs: number
 }) {
   const [error, setError] = useState<string | null>(null)
 
@@ -71,7 +80,9 @@ function ListingCard({
   const name = [listing.itemName, listing.itemType].filter(Boolean).join(" ") || "Unknown item"
 
   return (
-    <li className="rounded-lg border border-border bg-card p-3">
+    <li className="overflow-hidden rounded-lg border border-border bg-card">
+      <LifeBar receivedAt={listing.receivedAt} ttlMs={listingTtlMs} />
+      <div className="p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">
@@ -115,7 +126,34 @@ function ListingCard({
         <p className="mt-2 text-[11px] text-amber-400">auto-travelled</p>
       )}
       {error && <p className="mt-2 text-[11px] text-destructive">{error}</p>}
+      </div>
     </li>
+  )
+}
+
+/**
+ * Drains over the listing's TTL. The server expires it at zero and pushes an
+ * `expire` event, so this is a preview of a removal that is about to happen,
+ * not a client-side guess.
+ */
+function LifeBar({ receivedAt, ttlMs }: { receivedAt: number; ttlMs: number }) {
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 500)
+    return () => clearInterval(t)
+  }, [])
+
+  const remaining = Math.max(0, receivedAt + ttlMs - now)
+  const pct = Math.max(0, Math.min(100, (remaining / ttlMs) * 100))
+  // Green while there's time, amber under a third, red in the last 20s.
+  const tone =
+    remaining < 20_000 ? "bg-destructive" : pct < 33 ? "bg-amber-500" : "bg-emerald-500"
+
+  return (
+    <div className="h-0.5 w-full bg-border" title={`${Math.ceil(remaining / 1000)}s left`}>
+      <div className={`h-full transition-[width] duration-500 ${tone}`} style={{ width: `${pct}%` }} />
+    </div>
   )
 }
 

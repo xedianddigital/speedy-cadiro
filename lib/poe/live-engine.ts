@@ -8,7 +8,16 @@
 
 import { EventEmitter } from "node:events"
 import WebSocket from "ws"
-import type { Listing, SearchStatus, ServerEvent, Session, WatchedSearch } from "./types"
+import {
+  AUTO_TRAVEL_COOLDOWN_MAX_MS,
+  AUTO_TRAVEL_COOLDOWN_MIN_MS,
+  MAX_ACTIVE_SEARCHES,
+  type Listing,
+  type SearchStatus,
+  type ServerEvent,
+  type Session,
+  type WatchedSearch,
+} from "./types"
 import { getSearches, getSession, getSettings } from "./config"
 import {
   CloudflareError,
@@ -43,8 +52,8 @@ const FETCH_BATCH = 10
 /** Wait briefly so a burst of ids becomes one batched fetch. */
 const FETCH_DEBOUNCE_MS = 120
 
-/** How many recent listings to keep for the UI and for whisper re-fetching. */
-const LISTING_CACHE_MAX = 500
+/** How often to sweep the buffer for listings that have aged out. */
+const EXPIRY_SWEEP_MS = 5_000
 
 interface Connection {
   search: WatchedSearch
@@ -61,6 +70,12 @@ interface Connection {
   pending: string[]
   flushTimer: NodeJS.Timeout | null
   fetching: boolean
+  /**
+   * Unix ms until which pushed ids are discarded without being fetched. Set
+   * after an auto-travel. The socket deliberately stays open: disconnecting and
+   * reconnecting on every cooldown is exactly the pattern that earns a 1013.
+   */
+  pausedUntil: number
 }
 
 interface CachedListing {
@@ -74,9 +89,27 @@ class LiveEngine {
   private listings = new Map<string, CachedListing>()
   private lastAutoTravelAt = new Map<string, number>()
 
+  private sweepTimer: NodeJS.Timeout | null = null
+
   constructor() {
     // SSE clients come and go; don't warn when several attach at once.
     this.events.setMaxListeners(0)
+    this.sweepTimer = setInterval(() => void this.sweepExpired(), EXPIRY_SWEEP_MS)
+    // Don't hold the process open just for the sweep.
+    this.sweepTimer.unref?.()
+  }
+
+  /** Drop listings past their TTL so the manual feed only shows live ones. */
+  private async sweepExpired(): Promise<void> {
+    if (this.listings.size === 0) return
+    const { listingTtlMs } = await getSettings()
+    const cutoff = Date.now() - listingTtlMs
+    for (const [id, cached] of this.listings) {
+      if (cached.listing.receivedAt < cutoff) {
+        this.listings.delete(id)
+        this.emit({ type: "expire", listingId: id })
+      }
+    }
   }
 
   // ---- broadcast ----
@@ -130,6 +163,14 @@ class LiveEngine {
 
   async start(search: WatchedSearch): Promise<void> {
     if (this.connections.has(search.id)) return
+
+    if (this.connections.size >= MAX_ACTIVE_SEARCHES) {
+      const message = `Not starting "${search.title}": ${MAX_ACTIVE_SEARCHES} live searches already running. Pause one first.`
+      this.log("warn", message)
+      this.emit({ type: "status", searchInternalId: search.id, status: "error", error: message })
+      return
+    }
+
     const conn: Connection = {
       search,
       ws: null,
@@ -142,6 +183,7 @@ class LiveEngine {
       pending: [],
       flushTimer: null,
       fetching: false,
+      pausedUntil: 0,
     }
     this.connections.set(search.id, conn)
     await this.connect(conn)
@@ -288,6 +330,11 @@ class LiveEngine {
     }
     if (!Array.isArray(msg.new) || msg.new.length === 0) return
 
+    // In auto-travel cooldown: drop the ids entirely. Not fetching them is the
+    // point - it costs zero API calls and stops a burst turning into a flood of
+    // hideout jumps.
+    if (Date.now() < conn.pausedUntil) return
+
     for (const id of msg.new) {
       if (!this.listings.has(id) && !conn.pending.includes(id)) conn.pending.push(id)
     }
@@ -339,19 +386,23 @@ class LiveEngine {
   }
 
   private async onListing(conn: Connection, listing: Listing, session: Session): Promise<void> {
-    this.cache(listing, conn.search)
+    const { bufferSize } = await getSettings()
+    this.cache(listing, conn.search, bufferSize)
     this.emit({ type: "listing", listing })
 
     const settings = await getSettings()
     if (!settings.autoTravelEnabled || !conn.search.autoTravel) return
     if (!listing.whisperToken) return
+    if (Date.now() < conn.pausedUntil) return
 
-    const last = this.lastAutoTravelAt.get(conn.search.id) ?? 0
-    if (Date.now() - last < settings.autoTravelCooldownMs) {
-      this.log("info", `Auto-travel skipped (cooldown): ${listing.itemName || listing.itemType}`)
-      return
-    }
+    // Start the cooldown before the whisper, not after: a burst arriving while
+    // the request is in flight must not queue up a second travel.
+    const cooldown = clampCooldown(settings.autoTravelCooldownMs)
+    conn.pausedUntil = Date.now() + cooldown
+    conn.pending.length = 0
     this.lastAutoTravelAt.set(conn.search.id, Date.now())
+    this.emit({ type: "cooldown", searchInternalId: conn.search.id, until: conn.pausedUntil })
+    this.log("info", `Auto-travel armed cooldown: pausing ${conn.search.title} for ${Math.round(cooldown / 1000)}s.`)
 
     // The token was just issued, so it is fresh - whisper immediately.
     this.emit({ type: "whisper", listingId: listing.id, state: "sending" })
@@ -372,12 +423,15 @@ class LiveEngine {
     }
   }
 
-  private cache(listing: Listing, search: WatchedSearch): void {
+  private cache(listing: Listing, search: WatchedSearch, bufferSize: number): void {
     this.listings.set(listing.id, { listing, search })
-    if (this.listings.size > LISTING_CACHE_MAX) {
-      // Map preserves insertion order, so the oldest key is first.
+    // Map preserves insertion order, so the oldest key is first. The UI sorts
+    // by receivedAt, so newest still shows on top.
+    while (this.listings.size > bufferSize) {
       const oldest = this.listings.keys().next().value
-      if (oldest) this.listings.delete(oldest)
+      if (!oldest) break
+      this.listings.delete(oldest)
+      this.emit({ type: "expire", listingId: oldest })
     }
   }
 
@@ -441,6 +495,10 @@ function cookieHeader(session: Session): string {
   if (session.poetoken) parts.push(`POETOKEN=${session.poetoken}`)
   if (session.cfClearance) parts.push(`cf_clearance=${session.cfClearance}`)
   return parts.join("; ")
+}
+
+function clampCooldown(ms: number): number {
+  return Math.min(AUTO_TRAVEL_COOLDOWN_MAX_MS, Math.max(AUTO_TRAVEL_COOLDOWN_MIN_MS, ms))
 }
 
 function describeClose(code: number): string | undefined {
