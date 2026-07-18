@@ -446,7 +446,10 @@ function cookieHeader(session: Session): string {
 function describeClose(code: number): string | undefined {
   switch (code) {
     case 1013:
-      return "Server said try again later (1013) - too many live searches or connecting too fast."
+      // Observed in practice when POESESSID has rotated: the REST API still
+      // accepts the old cookie but the live socket does not, and GGG reports it
+      // as "try again later" rather than an auth error.
+      return "Server said try again later (1013). Usually a stale POESESSID - re-detect your cookies."
     case 1008:
       return "Server rejected the connection (1008 policy violation)."
     case 1006:
