@@ -7,6 +7,16 @@
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 
+/** Exposed by electron/preload.js; absent when the UI runs in a browser tab. */
+declare global {
+  interface Window {
+    poeDesktop?: {
+      isDesktop: boolean
+      login: () => Promise<{ ok: boolean; valid: boolean; reason?: string; found?: string[] }>
+    }
+  }
+}
+
 interface SessionInfo {
   configured: boolean
   valid?: boolean
@@ -27,6 +37,9 @@ export function SessionPanel({
   const [notice, setNotice] = useState<{ kind: "ok" | "warn" | "error"; text: string } | null>(null)
   const [manualOpen, setManualOpen] = useState(false)
   const [form, setForm] = useState({ poesessid: "", poetoken: "", cfClearance: "", userAgent: "" })
+  // Set after mount: the bridge only exists in the desktop shell, and reading it
+  // during render would mismatch the server-rendered markup.
+  const [isDesktop, setIsDesktop] = useState(false)
 
   const refresh = async () => {
     try {
@@ -41,6 +54,7 @@ export function SessionPanel({
   }
 
   useEffect(() => {
+    setIsDesktop(Boolean(window.poeDesktop?.isDesktop))
     void refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -124,6 +138,24 @@ export function SessionPanel({
     }
   }
 
+  const signIn = async () => {
+    setBusy(true)
+    setNotice({ kind: "warn", text: "Log in to pathofexile.com in the window that opened…" })
+    try {
+      const result = await window.poeDesktop!.login()
+      if (result.valid) {
+        setNotice({ kind: "ok", text: "Connected. Signed in to pathofexile.com." })
+      } else {
+        setNotice({ kind: "error", text: result.reason ?? "Sign-in didn't complete." })
+      }
+      await refresh()
+    } catch (err) {
+      setNotice({ kind: "error", text: `Sign-in failed: ${(err as Error).message}` })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const clear = async () => {
     setBusy(true)
     try {
@@ -175,8 +207,20 @@ export function SessionPanel({
         </p>
       )}
 
+      {isDesktop && (
+        <div className="mb-3">
+          <Button size="sm" onClick={signIn} disabled={busy} className="w-full">
+            {busy ? "Working…" : "Sign in to pathofexile.com"}
+          </Button>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Opens a login window. Works on every browser version, including Chrome 127+ where
+            cookies can&apos;t be read from disk at all.
+          </p>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={detect} disabled={busy}>
+        <Button size="sm" variant={isDesktop ? "outline" : "default"} onClick={detect} disabled={busy}>
           {busy ? "Working…" : "Detect from browser"}
         </Button>
         <Button size="sm" variant="outline" onClick={() => setManualOpen((v) => !v)}>

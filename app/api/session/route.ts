@@ -34,7 +34,7 @@ export async function GET(): Promise<Response> {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  let body: Partial<Session>
+  let body: Partial<Session> & { trustUserAgent?: boolean }
   try {
     body = await req.json()
   } catch {
@@ -47,10 +47,13 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // cf_clearance is bound to the exact User-Agent of the browser that earned it.
-  // The desktop shell's own UA identifies Electron and would always mismatch, so
-  // fall back to a real installed browser's UA instead.
+  //
+  // Normally the desktop shell's own agent identifies Electron and would always
+  // mismatch, so it is replaced with a real installed browser's. The exception
+  // is the in-app login: those cookies were issued to this window, so its agent
+  // is the only correct one.
   let userAgent = body.userAgent?.trim() ?? ""
-  if (!userAgent || /Electron\//i.test(userAgent)) {
+  if (!body.trustUserAgent && (!userAgent || /Electron\//i.test(userAgent))) {
     userAgent = (await detectUserAgent())?.userAgent ?? ""
   }
 
