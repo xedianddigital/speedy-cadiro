@@ -44,9 +44,6 @@ const STABLE_MS = 30_000
 /** Minimum wait after an explicit "try again later" / policy close. */
 const THROTTLED_MIN_MS = 60_000
 
-/** Keep the connection from being reaped as idle. */
-const PING_MS = 30_000
-
 /** /fetch accepts at most 10 ids per call. */
 // One token per fetch: the current protocol delivers one result JWT per
 // message, and result tokens (unlike plain ids) can't be safely comma-batched.
@@ -65,7 +62,6 @@ interface Connection {
   reconnectTimer: NodeJS.Timeout | null
   /** Fires once a socket has been up long enough to count as healthy. */
   stableTimer: NodeJS.Timeout | null
-  pingTimer: NodeJS.Timeout | null
   /** Set when we deliberately close, so onclose doesn't schedule a reconnect. */
   stopping: boolean
   /** Ids pushed by the socket that haven't been fetched yet. */
@@ -180,7 +176,6 @@ class LiveEngine {
       attempts: 0,
       reconnectTimer: null,
       stableTimer: null,
-      pingTimer: null,
       stopping: false,
       pending: [],
       flushTimer: null,
@@ -253,15 +248,17 @@ class LiveEngine {
       this.setStatus(conn, "connected")
       this.log("info", `Live search connected: ${conn.search.title}`)
 
-      // Don't trust "open" alone - wait for the socket to prove it survives.
+      // Deliberately NO client-side ping. GGG's live search sends its own pings
+      // (~every 30s) and ws auto-answers them, which keeps the connection alive
+      // for hours. Sending our own ping instead earns a 1008 policy close - that
+      // was the cause of the connect / ~30s / drop / reconnect loop. Verified by
+      // holding a ping-free connection open for 3 minutes with no issue.
+
+      // Reset backoff once the socket has proven it survives a while.
       conn.stableTimer = setTimeout(() => {
         conn.attempts = 0
         conn.stableTimer = null
       }, STABLE_MS)
-
-      conn.pingTimer = setInterval(() => {
-        if (conn.ws?.readyState === WebSocket.OPEN) conn.ws.ping()
-      }, PING_MS)
     })
 
     ws.on("message", (raw) => {
@@ -297,10 +294,6 @@ class LiveEngine {
     if (conn.stableTimer) {
       clearTimeout(conn.stableTimer)
       conn.stableTimer = null
-    }
-    if (conn.pingTimer) {
-      clearInterval(conn.pingTimer)
-      conn.pingTimer = null
     }
   }
 
