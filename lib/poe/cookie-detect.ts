@@ -64,10 +64,19 @@ function chromiumCandidates(): ChromiumPaths[] {
     out.push({ userData: path.join(appSup, "Microsoft Edge"), label: "Edge" })
     out.push({ userData: path.join(appSup, "BraveSoftware", "Brave-Browser"), label: "Brave" })
   } else {
-    const config = path.join(home, ".config")
-    out.push({ userData: path.join(config, "google-chrome"), label: "Chrome" })
-    out.push({ userData: path.join(config, "microsoft-edge"), label: "Edge" })
-    out.push({ userData: path.join(config, "BraveSoftware", "Brave-Browser"), label: "Brave" })
+    // Native, snap, and flatpak installs each keep a separate config tree.
+    const configRoots = [
+      path.join(home, ".config"),
+      path.join(home, "snap", "chromium", "current", ".config"),
+      path.join(home, ".var", "app", "com.google.Chrome", "config"),
+      path.join(home, ".var", "app", "com.brave.Browser", "config"),
+    ]
+    for (const config of configRoots) {
+      out.push({ userData: path.join(config, "google-chrome"), label: "Chrome" })
+      out.push({ userData: path.join(config, "chromium"), label: "Chromium" })
+      out.push({ userData: path.join(config, "microsoft-edge"), label: "Edge" })
+      out.push({ userData: path.join(config, "BraveSoftware", "Brave-Browser"), label: "Brave" })
+    }
   }
   return out
 }
@@ -99,41 +108,147 @@ async function dpapiUnprotect(buf: Buffer): Promise<Buffer> {
   return Buffer.from(stdout.trim(), "base64")
 }
 
-async function getChromiumAesKey(userData: string): Promise<Buffer> {
-  const localStatePath = path.join(userData, "Local State")
-  const raw = await fs.readFile(localStatePath, "utf8")
-  const json = JSON.parse(raw) as { os_crypt?: { encrypted_key?: string } }
-  const encKeyB64 = json.os_crypt?.encrypted_key
-  if (!encKeyB64) throw new Error("No os_crypt.encrypted_key in Local State.")
-  const encKey = Buffer.from(encKeyB64, "base64")
-  // Strip the "DPAPI" prefix (5 bytes) then DPAPI-unprotect (Windows only).
-  if (process.platform !== "win32") {
-    throw new Error("Chromium cookie decryption is only implemented for Windows in this build.")
-  }
-  const withoutPrefix = encKey.subarray(5)
-  return dpapiUnprotect(withoutPrefix)
+// Windows wraps a 256-bit AES-GCM key with DPAPI. macOS and Linux instead derive
+// a 128-bit AES-CBC key with PBKDF2 from a per-browser "Safe Storage" password.
+type CryptoScheme = "gcm" | "cbc"
+
+interface ChromiumCrypto {
+  /** Candidate keys, tried in order (Linux can't tell v10 from v11 up front). */
+  keys: Buffer[]
+  scheme: CryptoScheme
 }
 
-function decryptChromiumValue(encrypted: Buffer, aesKey: Buffer): string | null {
+const SAFE_STORAGE_SERVICE: Record<string, string> = {
+  Chrome: "Chrome Safe Storage",
+  Chromium: "Chromium Safe Storage",
+  Edge: "Microsoft Edge Safe Storage",
+  Brave: "Brave Safe Storage",
+}
+
+function deriveCbcKey(password: string, iterations: number): Buffer {
+  return crypto.pbkdf2Sync(password, "saltysalt", iterations, 16, "sha1")
+}
+
+async function macKeychainPassword(label: string): Promise<string | null> {
+  const service = SAFE_STORAGE_SERVICE[label] ?? "Chrome Safe Storage"
+  try {
+    // Prompts once, then the user can "Always Allow".
+    const { stdout } = await execFileAsync("security", [
+      "find-generic-password",
+      "-w",
+      "-s",
+      service,
+      "-a",
+      label,
+    ])
+    return stdout.trim() || null
+  } catch {
+    return null
+  }
+}
+
+async function linuxKeyringPassword(label: string): Promise<string | null> {
+  const app = label === "Edge" ? "microsoft-edge" : label.toLowerCase()
+  const attempts = [
+    ["lookup", "xdg:schema", "chrome_libsecret_os_crypt_password_v2", "application", app],
+    ["lookup", "xdg:schema", "chrome_libsecret_os_crypt_password_v1", "application", app],
+    ["lookup", "application", app],
+  ]
+  for (const args of attempts) {
+    try {
+      const { stdout } = await execFileAsync("secret-tool", args)
+      if (stdout.trim()) return stdout.trim()
+    } catch {
+      // secret-tool missing or no match - try the next schema.
+    }
+  }
+  return null
+}
+
+async function getChromiumCrypto(userData: string, label: string): Promise<ChromiumCrypto> {
+  if (process.platform === "win32") {
+    const raw = await fs.readFile(path.join(userData, "Local State"), "utf8")
+    const json = JSON.parse(raw) as { os_crypt?: { encrypted_key?: string } }
+    const encKeyB64 = json.os_crypt?.encrypted_key
+    if (!encKeyB64) throw new Error("No os_crypt.encrypted_key in Local State.")
+    // Strip the "DPAPI" prefix (5 bytes), then unprotect with the current user's key.
+    const key = await dpapiUnprotect(Buffer.from(encKeyB64, "base64").subarray(5))
+    return { keys: [key], scheme: "gcm" }
+  }
+
+  if (process.platform === "darwin") {
+    const pw = await macKeychainPassword(label)
+    if (!pw) {
+      throw new Error(
+        `Could not read "${SAFE_STORAGE_SERVICE[label] ?? label}" from the macOS Keychain (denied or absent).`,
+      )
+    }
+    return { keys: [deriveCbcKey(pw, 1003)], scheme: "cbc" }
+  }
+
+  // Linux: v11 cookies use a keyring-derived password, v10 uses the well-known
+  // "peanuts" fallback used when no keyring is available. Try both.
+  const keys: Buffer[] = []
+  const pw = await linuxKeyringPassword(label)
+  if (pw) keys.push(deriveCbcKey(pw, 1))
+  keys.push(deriveCbcKey("peanuts", 1))
+  return { keys, scheme: "cbc" }
+}
+
+/** Chromium's AES-CBC mode uses a fixed IV of 16 space characters. */
+const CBC_IV = Buffer.alloc(16, 0x20)
+
+function stripPkcs7(buf: Buffer): Buffer {
+  if (buf.length === 0) return buf
+  const pad = buf[buf.length - 1]
+  if (pad < 1 || pad > 16 || pad > buf.length) return buf
+  return buf.subarray(0, buf.length - pad)
+}
+
+function isPlausibleCookie(text: string): boolean {
+  // Cookie values are printable ASCII; a wrong key yields binary garbage.
+  return text.length > 0 && /^[\x20-\x7e]+$/.test(text)
+}
+
+function decryptChromiumValue(encrypted: Buffer, cryptoInfo: ChromiumCrypto): string | null {
   if (encrypted.length === 0) return null
   const prefix = encrypted.subarray(0, 3).toString("latin1")
-  if (prefix === "v10" || prefix === "v11") {
-    const nonce = encrypted.subarray(3, 15)
-    const tag = encrypted.subarray(encrypted.length - 16)
-    const ciphertext = encrypted.subarray(15, encrypted.length - 16)
-    const decipher = crypto.createDecipheriv("aes-256-gcm", aesKey, nonce)
-    decipher.setAuthTag(tag)
-    let out = decipher.update(ciphertext)
-    out = Buffer.concat([out, decipher.final()])
-    // Newer Chrome prepends a 32-byte header to the plaintext for some cookies.
-    const text = out.toString("utf8")
-    return text
-  }
+
   if (prefix === "v20") {
-    // App-bound encryption (Chrome 127+) - requires app-bound key we can't access.
+    // App-bound encryption (Chrome 127+) - the key is held by a Windows service
+    // and is deliberately not reachable from another process.
     throw new Error("APP_BOUND")
   }
-  // Legacy: DPAPI-encrypted directly (older Chrome) - handled by caller on win32.
+
+  if (prefix !== "v10" && prefix !== "v11") {
+    // Legacy: DPAPI-encrypted directly (older Chrome) - handled by caller on win32.
+    return null
+  }
+
+  const body = encrypted.subarray(3)
+
+  if (cryptoInfo.scheme === "gcm") {
+    const nonce = body.subarray(0, 12)
+    const tag = body.subarray(body.length - 16)
+    const ciphertext = body.subarray(12, body.length - 16)
+    const decipher = crypto.createDecipheriv("aes-256-gcm", cryptoInfo.keys[0], nonce)
+    decipher.setAuthTag(tag)
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8")
+  }
+
+  // CBC has no auth tag, so a wrong key decrypts to garbage rather than failing.
+  // Try each candidate and keep the first result that looks like a cookie.
+  for (const key of cryptoInfo.keys) {
+    try {
+      const decipher = crypto.createDecipheriv("aes-128-cbc", key, CBC_IV)
+      decipher.setAutoPadding(false)
+      const out = Buffer.concat([decipher.update(body), decipher.final()])
+      const text = stripPkcs7(out).toString("utf8")
+      if (isPlausibleCookie(text)) return text
+    } catch {
+      // Wrong key or bad block size - try the next candidate.
+    }
+  }
   return null
 }
 
@@ -193,7 +308,7 @@ async function tryChromium(): Promise<DetectResult> {
       if (!dbPath) continue
 
       try {
-        const aesKey = await getChromiumAesKey(cand.userData)
+        const cryptoInfo = await getChromiumCrypto(cand.userData, cand.label)
         // Copy the (possibly locked) DB to a temp file before opening.
         const tmp = path.join(os.tmpdir(), `poe-cookies-${Date.now()}.db`)
         await fs.copyFile(dbPath, tmp)
@@ -208,7 +323,7 @@ async function tryChromium(): Promise<DetectResult> {
           for (const row of rows) {
             if (!HOST_MATCH(row.host_key)) continue
             try {
-              const value = decryptChromiumValue(Buffer.from(row.encrypted_value), aesKey)
+              const value = decryptChromiumValue(Buffer.from(row.encrypted_value), cryptoInfo)
               if (value) found[row.name] = sanitize(value)
             } catch (e) {
               if ((e as Error).message === "APP_BOUND") appBound = true
@@ -314,13 +429,7 @@ async function tryFirefox(): Promise<DetectResult> {
       }
       const foundKeys = Object.keys(found) as WantedCookie[]
       if (foundKeys.length > 0) {
-        const major = "121"
-        const osToken =
-          process.platform === "win32"
-            ? "Windows NT 10.0; Win64; x64; rv:121.0"
-            : process.platform === "darwin"
-              ? "Macintosh; Intel Mac OS X 10.15; rv:121.0"
-              : "X11; Linux x86_64; rv:121.0"
+        const major = await readFirefoxMajor(path.join(entry.root, entry.name))
         return {
           ok: true,
           found: foundKeys,
@@ -328,8 +437,8 @@ async function tryFirefox(): Promise<DetectResult> {
             poesessid: found.POESESSID,
             poetoken: found.POETOKEN,
             cfClearance: found.cf_clearance,
-            userAgent: `Mozilla/5.0 (${osToken}) Gecko/20100101 Firefox/${major}.0`,
-            source: `Firefox (${entry.name})`,
+            userAgent: buildFirefoxUA(major),
+            source: `Firefox ${major ?? "?"} (${entry.name})`,
           },
         }
       }
@@ -338,6 +447,31 @@ async function tryFirefox(): Promise<DetectResult> {
     }
   }
   return { ok: false, found: [], reason: "No Firefox profile had pathofexile.com cookies." }
+}
+
+/** Major version from a profile's compatibility.ini (e.g. "152.0.4_2026..." -> "152"). */
+async function readFirefoxMajor(profileDir: string): Promise<string | null> {
+  try {
+    const ini = await fs.readFile(path.join(profileDir, "compatibility.ini"), "utf8")
+    const match = ini.match(/^LastVersion=(\d+)/m)
+    return match ? match[1] : null
+  } catch {
+    return null
+  }
+}
+
+function buildFirefoxUA(major: string | null): string {
+  const version = major ?? "121"
+  // Firefox froze the `rv:` token at 109.0 from version 110 onward, while the
+  // trailing Firefox/<version> keeps incrementing.
+  const rv = Number(version) >= 110 ? "109.0" : `${version}.0`
+  const osToken =
+    process.platform === "win32"
+      ? `Windows NT 10.0; Win64; x64; rv:${rv}`
+      : process.platform === "darwin"
+        ? `Macintosh; Intel Mac OS X 10.15; rv:${rv}`
+        : `X11; Linux x86_64; rv:${rv}`
+  return `Mozilla/5.0 (${osToken}) Gecko/20100101 Firefox/${version}.0`
 }
 
 function sanitize(value: string): string {

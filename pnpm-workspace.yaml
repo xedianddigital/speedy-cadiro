@@ -1,0 +1,13 @@
+# pnpm 11 no longer reads the "pnpm" field in package.json; these settings live here.
+
+allowBuilds:
+  # Native binding used to read the local browser cookie DBs. Loaded lazily, so
+  # a failed build degrades to manual cookie paste rather than crashing the app.
+  better-sqlite3: true
+  # Next.js image optimisation.
+  sharp: true
+  # Mock service worker: a v0 sandbox leftover, not used by this app.
+  msw: false
+
+overrides:
+  hono: 4.12.25
