@@ -1,0 +1,65 @@
+name: Build installers
+
+on:
+  # Tag a release (v0.1.0) to publish installers, or run manually from the
+  # Actions tab to get a downloadable artifact without cutting a release.
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: dist:win
+            artifact: windows-installer
+            path: dist/*.exe
+          - os: ubuntu-latest
+            target: dist:linux
+            artifact: linux-appimage
+            path: dist/*.AppImage
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # electron-builder rebuilds better-sqlite3 against Electron's ABI, which
+      # needs a working native toolchain. Windows runners ship one already.
+      - name: Build installer
+        run: pnpm ${{ matrix.target }}
+        env:
+          # Skip code signing: unsigned builds still install, they just show a
+          # SmartScreen warning the user has to click through.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.path }}
+          fail_on_unmatched_files: true

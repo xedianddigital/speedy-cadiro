@@ -10,42 +10,47 @@ Everything runs on your machine. Your cookies are stored only in `.data/config.j
 
 ---
 
-## Requirements
+## Install (Windows)
 
-- **Node.js 20.9 or newer** (Next.js 16 will not start on Node 18)
-- **pnpm** (ships with Node via Corepack)
-- A browser logged in to pathofexile.com
+1. Download **`PoE Trade Notifier-Setup-x.y.z.exe`** from the
+   [Releases page](../../releases/latest).
+2. Run it. It installs per-user and launches itself — no admin rights, no
+   wizard, nothing else to install.
+3. Windows SmartScreen will warn that the app is unsigned. Click **More info →
+   Run anyway**. (Code signing certificates cost money; the build is
+   reproducible from source via GitHub Actions if you'd rather verify it.)
 
-## Setup
+Everything is bundled: you do **not** need Node.js, pnpm, or anything else.
+
+Your session and settings are stored in
+`%APPDATA%\poe-trade-notifier\data\config.json` and are not touched by
+uninstalling.
+
+---
+
+## Running from source (developers)
+
+Requires **Node.js 20.9+**.
 
 ```bash
 corepack enable pnpm
 pnpm install
-pnpm dev
+pnpm dev        # http://localhost:3000 in a browser
+pnpm electron   # or run the desktop shell against the dev server
 ```
 
-Then open <http://localhost:3000>.
+Building installers yourself:
 
-If `pnpm install` skips the native build for `better-sqlite3`, run
-`pnpm rebuild better-sqlite3`. That module is only used to read browser cookie
-databases; it is loaded lazily, so if the build fails the app still works with
-manual cookie paste.
+```bash
+pnpm dist:win     # Windows NSIS installer  -> dist/
+pnpm dist:linux   # Linux AppImage          -> dist/
+pnpm dist:dir     # unpacked app, no installer (fastest for testing)
+```
+
+Installers for tagged releases are built on GitHub Actions; see
+`.github/workflows/build.yml`.
 
 ---
-
-## Windows
-
-```powershell
-# 1. Install Node 20+ (LTS) from https://nodejs.org, then in PowerShell:
-node --version          # must print v20.9+ or v22+
-
-# 2. From the project folder:
-corepack enable pnpm
-pnpm install
-pnpm dev
-```
-
-Open <http://localhost:3000>.
 
 ### Cookie detection on Windows
 
@@ -89,15 +94,40 @@ Cloudflare to reject requests.
 Live search only pushes items listed **from now on**. An empty feed on a quiet
 search is normal.
 
-### Auto-travel
+### The two modes
 
-Off by default, behind two switches: a global master toggle in Settings and a
-per-search checkbox. When armed, the first matching listing is whispered
-automatically, subject to a per-search cooldown (default 10s).
+**Auto-travel** — off by default, behind two switches: a global master toggle in
+Settings and a per-search checkbox. On the first matching listing it whispers
+the seller immediately, then **stops scanning that search for 5–30s**
+(configurable, default 15s). Without that pause a busy search would yank you
+between hideouts once a second. The socket stays connected during the pause and
+incoming listings are simply discarded, which costs zero API calls.
+
+**Manual travel** — the feed holds a bounded number of listings (default 10),
+newest first. Each has a Travel button and a draining bar showing its remaining
+life. Listings expire after 3 minutes (configurable) and are replaced by newer
+ones; when the buffer is full the oldest is evicted.
 
 This whispers sellers automatically from your account. GGG tolerates live-search
 notifiers, but automated whispering is a grey area in their terms. Keep the
 cooldown sane and don't leave it running unattended.
+
+## Staying under GGG's limits
+
+PoE actively defends against bots, so the app is deliberately conservative:
+
+- **Published budgets are obeyed.** Every response carries `X-Rate-Limit-*`
+  headers (`hits:period:restrict`). All requests are serialised through one
+  limiter that paces itself from the tightest published rule at 60% of budget,
+  adds jitter, and sits out any restriction rather than discovering limits by
+  being 429'd.
+- **At most 5 live searches** run at once. One WebSocket per search is the
+  clearest bot signal there is.
+- **Cooldowns discard rather than disconnect.** Reconnecting on every cooldown
+  is exactly what earns a 1013.
+- **Reconnects back off exponentially** (1s→30s), and only reset after a socket
+  has stayed up 30s — because PoE accepts the upgrade and *then* closes when it
+  wants you to slow down.
 
 ---
 

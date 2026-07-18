@@ -14,8 +14,28 @@ import path from "node:path"
 import crypto from "node:crypto"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
+import { createRequire } from "node:module"
 
 const execFileAsync = promisify(execFile)
+
+/**
+ * Load better-sqlite3 without the bundler seeing it.
+ *
+ * A plain `import("better-sqlite3")` gets compiled into an aliased external
+ * module (`better-sqlite3-<hash>`) that only resolves through a symlink in the
+ * dev tree. That symlink can't be packaged, so the packaged app failed with
+ * "Cannot find module better-sqlite3-<hash>".
+ *
+ * Resolving from the working directory instead lets Node walk up to whichever
+ * node_modules actually holds the build compiled for the running ABI - the
+ * project's in development, the app root's in a packaged build.
+ */
+function loadSqlite(): typeof import("better-sqlite3") {
+  const requireCjs = createRequire(path.join(process.cwd(), "noop.js"))
+  // Split so no bundler can statically match the specifier.
+  const pkg = ["better", "sqlite3"].join("-")
+  return requireCjs(pkg) as typeof import("better-sqlite3")
+}
 
 const WANTED = ["POESESSID", "POETOKEN", "cf_clearance"] as const
 type WantedCookie = (typeof WANTED)[number]
@@ -281,10 +301,10 @@ function buildChromeUA(version: string | null, label: string): string {
 
 async function tryChromium(): Promise<DetectResult> {
   const reasons: string[] = []
-  let sqlite: typeof import("better-sqlite3") | null = null
+  let sqlite: typeof import("better-sqlite3")
   try {
     // Lazy-load: the app must not crash if the native binary isn't built.
-    sqlite = (await import("better-sqlite3")).default as unknown as typeof import("better-sqlite3")
+    sqlite = loadSqlite()
   } catch (err) {
     return {
       ok: false,
@@ -388,9 +408,9 @@ function firefoxProfileRoots(): string[] {
 }
 
 async function tryFirefox(): Promise<DetectResult> {
-  let sqlite: typeof import("better-sqlite3") | null = null
+  let sqlite: typeof import("better-sqlite3")
   try {
-    sqlite = (await import("better-sqlite3")).default as unknown as typeof import("better-sqlite3")
+    sqlite = loadSqlite()
   } catch (err) {
     return { ok: false, found: [], reason: `SQLite reader unavailable (${(err as Error).message}).` }
   }

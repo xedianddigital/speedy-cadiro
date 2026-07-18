@@ -1,13 +1,17 @@
 # pnpm 11 no longer reads the "pnpm" field in package.json; these settings live here.
 
+# electron-builder cannot package pnpm's symlinked store: it tries to recreate
+# symlinks into node_modules/.pnpm, which is not copied into the app bundle. A
+# hoisted (flat, npm-style) layout makes node_modules real directories, which
+# both electron-builder and Next's output tracing handle correctly.
+nodeLinker: hoisted
+
 allowBuilds:
   # Native binding used to read the local browser cookie DBs. Loaded lazily, so
   # a failed build degrades to manual cookie paste rather than crashing the app.
   better-sqlite3: true
   # Next.js image optimisation.
   sharp: true
-  # Mock service worker: a v0 sandbox leftover, not used by this app.
-  msw: false
-
-overrides:
-  hono: 4.12.25
+  # Only used when building the Windows installer, which happens on CI.
+  electron-winstaller: true
+  electron: true

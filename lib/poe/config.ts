@@ -13,7 +13,11 @@ import {
   DEFAULT_SETTINGS,
 } from "./types"
 
-const DATA_DIR = path.join(process.cwd(), ".data")
+// Packaged desktop builds install to a read-only directory, so Electron passes
+// a writable per-user path here. Falls back to ./.data for `pnpm dev`.
+const DATA_DIR = process.env.POE_DATA_DIR
+  ? path.resolve(process.env.POE_DATA_DIR)
+  : path.join(process.cwd(), ".data")
 const CONFIG_PATH = path.join(DATA_DIR, "config.json")
 
 const EMPTY_CONFIG: AppConfig = {
