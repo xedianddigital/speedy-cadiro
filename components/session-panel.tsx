@@ -148,23 +148,21 @@ export function SessionPanel({
             {busy ? "Working…" : "Sign in to pathofexile.com"}
           </Button>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Opens a login window. Works on every browser version, including Chrome 127+ where
-            cookies can&apos;t be read from disk at all.
+            Opens a login window. Sign in as usual — the app takes it from there.
           </p>
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          variant={isDesktop ? "outline" : "default"}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
           onClick={() => setManualOpen((v) => !v)}
+          className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
         >
-          {manualOpen ? "Hide manual" : "Paste cookies manually"}
-        </Button>
+          {manualOpen ? "Hide advanced" : "Enter cookies manually"}
+        </button>
         {info?.configured && (
-          <Button size="sm" variant="ghost" onClick={clear} disabled={busy}>
-            Clear
+          <Button size="sm" variant="ghost" onClick={clear} disabled={busy} className="ml-auto">
+            Sign out
           </Button>
         )}
       </div>

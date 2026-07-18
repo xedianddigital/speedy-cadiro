@@ -23,8 +23,8 @@ export interface LiveFeed {
   statuses: Record<string, SearchStatus>
   /** Last error reported per search, so the UI can explain a red or grey dot. */
   statusErrors: Record<string, string>
-  /** searchInternalId -> unix ms when its auto-travel cooldown ends. */
-  cooldowns: Record<string, number>
+  /** Unix ms when the global travel cooldown ends (all searches paused until then). */
+  cooldownUntil: number | null
   logs: LogLine[]
   connected: boolean
   sessionValid: boolean | null
@@ -35,7 +35,7 @@ export interface LiveFeed {
 export function useLiveFeed(soundEnabled: boolean): LiveFeed {
   const [listings, setListings] = useState<Listing[]>([])
   const [statuses, setStatuses] = useState<Record<string, SearchStatus>>({})
-  const [cooldowns, setCooldowns] = useState<Record<string, number>>({})
+  const [cooldownUntil, setCooldownUntil] = useState<number | null>(null)
   const [statusErrors, setStatusErrors] = useState<Record<string, string>>({})
   const [logs, setLogs] = useState<LogLine[]>([])
   const [connected, setConnected] = useState(false)
@@ -87,7 +87,7 @@ export function useLiveFeed(soundEnabled: boolean): LiveFeed {
           break
 
         case "cooldown":
-          setCooldowns((prev) => ({ ...prev, [event.searchInternalId]: event.until }))
+          setCooldownUntil(event.until)
           break
 
         case "status":
@@ -134,7 +134,7 @@ export function useLiveFeed(soundEnabled: boolean): LiveFeed {
     listings,
     statuses,
     statusErrors,
-    cooldowns,
+    cooldownUntil,
     logs,
     connected,
     sessionValid,

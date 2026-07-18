@@ -51,8 +51,8 @@ const PING_MS = 30_000
 // One token per fetch: the current protocol delivers one result JWT per
 // message, and result tokens (unlike plain ids) can't be safely comma-batched.
 const FETCH_BATCH = 1
-/** Wait briefly so a burst of ids becomes one batched fetch. */
-const FETCH_DEBOUNCE_MS = 120
+/** Fire almost immediately: the whole point is the shortest path to the hideout. */
+const FETCH_DEBOUNCE_MS = 0
 
 /** How often to sweep the buffer for listings that have aged out. */
 const EXPIRY_SWEEP_MS = 5_000
@@ -72,12 +72,6 @@ interface Connection {
   pending: string[]
   flushTimer: NodeJS.Timeout | null
   fetching: boolean
-  /**
-   * Unix ms until which pushed ids are discarded without being fetched. Set
-   * after an auto-travel. The socket deliberately stays open: disconnecting and
-   * reconnecting on every cooldown is exactly the pattern that earns a 1013.
-   */
-  pausedUntil: number
 }
 
 interface CachedListing {
@@ -89,6 +83,13 @@ class LiveEngine {
   readonly events = new EventEmitter()
   private connections = new Map<string, Connection>()
   private listings = new Map<string, CachedListing>()
+  /**
+   * Global travel lock. After ANY travel (auto or manual, from any search),
+   * every search stops fetching until this passes - so a match on one search
+   * can't yank the user to another hideout mid-purchase. The socket stays open;
+   * only fetching pauses, which costs zero API calls.
+   */
+  private travelPausedUntil = 0
 
   private sweepTimer: NodeJS.Timeout | null = null
 
@@ -100,11 +101,11 @@ class LiveEngine {
     this.sweepTimer.unref?.()
   }
 
-  /** Drop listings past their TTL so the manual feed only shows live ones. */
+  /** Clear the current listing once it has outlived the travel interval. */
   private async sweepExpired(): Promise<void> {
     if (this.listings.size === 0) return
-    const { listingTtlMs } = await getSettings()
-    const cutoff = Date.now() - listingTtlMs
+    const { autoTravelCooldownMs } = await getSettings()
+    const cutoff = Date.now() - autoTravelCooldownMs
     for (const [id, cached] of this.listings) {
       if (cached.listing.receivedAt < cutoff) {
         this.listings.delete(id)
@@ -184,7 +185,6 @@ class LiveEngine {
       pending: [],
       flushTimer: null,
       fetching: false,
-      pausedUntil: 0,
     }
     this.connections.set(search.id, conn)
     await this.connect(conn)
@@ -383,14 +383,15 @@ class LiveEngine {
     else if (Array.isArray(msg.new)) tokens.push(...msg.new.filter((x) => typeof x === "string"))
     if (tokens.length === 0) return
 
-    // In auto-travel cooldown: drop the tokens entirely. Not fetching them is
-    // the point - it costs zero API calls and stops a burst turning into a flood
-    // of hideout jumps.
-    if (Date.now() < conn.pausedUntil) return
+    // Global travel lock: while any travel is in its cooldown, every search
+    // drops incoming tokens. Zero API calls, and it stops a busy search flooding
+    // travels or interrupting a purchase in progress.
+    if (Date.now() < this.travelPausedUntil) return
 
-    for (const token of tokens) {
-      if (!conn.pending.includes(token)) conn.pending.push(token)
-    }
+    // Only the newest token matters - the goal is the shortest path to the most
+    // recent listing, and stale ones are likely already sold.
+    const newest = tokens[tokens.length - 1]
+    conn.pending = [newest]
     if (conn.flushTimer) return
     conn.flushTimer = setTimeout(() => {
       conn.flushTimer = null
@@ -448,20 +449,21 @@ class LiveEngine {
       return
     }
 
-    this.cache(listing, conn.search, settings.bufferSize)
+    this.cache(listing, conn.search)
     this.emit({ type: "listing", listing })
 
     if (!settings.autoTravelEnabled || !conn.search.autoTravel) return
     if (!listing.whisperToken) return
-    if (Date.now() < conn.pausedUntil) return
+    if (Date.now() < this.travelPausedUntil) return
 
-    // Start the cooldown before the whisper, not after: a burst arriving while
-    // the request is in flight must not queue up a second travel.
+    // Arm the GLOBAL cooldown before the whisper: every search pauses, so a
+    // match elsewhere can't travel the user away mid-purchase, and a burst in
+    // flight can't queue a second travel.
     const cooldown = clampCooldown(settings.autoTravelCooldownMs)
-    conn.pausedUntil = Date.now() + cooldown
-    conn.pending.length = 0
-    this.emit({ type: "cooldown", searchInternalId: conn.search.id, until: conn.pausedUntil })
-    this.log("info", `Auto-travel armed cooldown: pausing ${conn.search.title} for ${Math.round(cooldown / 1000)}s.`)
+    this.travelPausedUntil = Date.now() + cooldown
+    for (const c of this.connections.values()) c.pending = []
+    this.emit({ type: "cooldown", until: this.travelPausedUntil })
+    this.log("info", `Travelling to ${listing.itemName || listing.itemType} - all searches paused ${Math.round(cooldown / 1000)}s.`)
 
     // The token was just issued, so it is fresh - whisper immediately.
     this.emit({ type: "whisper", listingId: listing.id, state: "sending" })
@@ -482,16 +484,13 @@ class LiveEngine {
     }
   }
 
-  private cache(listing: Listing, search: WatchedSearch, bufferSize: number): void {
-    this.listings.set(listing.id, { listing, search })
-    // Map preserves insertion order, so the oldest key is first. The UI sorts
-    // by receivedAt, so newest still shows on top.
-    while (this.listings.size > bufferSize) {
-      const oldest = this.listings.keys().next().value
-      if (!oldest) break
-      this.listings.delete(oldest)
-      this.emit({ type: "expire", listingId: oldest })
+  /** Only the current listing is kept: this app shows one travel target at a time. */
+  private cache(listing: Listing, search: WatchedSearch): void {
+    for (const oldId of this.listings.keys()) {
+      if (oldId !== listing.id) this.emit({ type: "expire", listingId: oldId })
     }
+    this.listings.clear()
+    this.listings.set(listing.id, { listing, search })
   }
 
   // ---- manual travel ----
@@ -536,6 +535,13 @@ class LiveEngine {
       cached.listing.tokenExpMs = fresh.tokenExpMs
       cached.listing.whisperState = "sent"
       this.emit({ type: "whisper", listingId, state: "sent" })
+
+      // A manual travel also arms the global cooldown, so auto-travel can't yank
+      // the user away while they finish this purchase.
+      const { autoTravelCooldownMs } = await getSettings()
+      this.travelPausedUntil = Date.now() + clampCooldown(autoTravelCooldownMs)
+      for (const c of this.connections.values()) c.pending = []
+      this.emit({ type: "cooldown", until: this.travelPausedUntil })
       return { ok: true }
     } catch (err) {
       const message = (err as Error).message
@@ -549,7 +555,6 @@ class LiveEngine {
   }
 }
 
-/**
 /**
  * Cookies for the live socket, matching what the trade site itself sends on its
  * live-search WebSocket: cf_clearance (required - Cloudflare proxies the socket)

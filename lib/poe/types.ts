@@ -33,25 +33,22 @@ export interface WatchedSearch {
 }
 
 export interface Settings {
-  /** Global master switch for auto-travel. When false, no search auto-travels. */
+  /** Master switch for auto-travel. When false, listings are shown but not travelled to. */
   autoTravelEnabled: boolean
   /**
-   * After an auto-travel, stop processing new listings for this long. Prevents
-   * being yanked between hideouts once per second on a busy search, and keeps
-   * our request rate low. Clamped to AUTO_TRAVEL_COOLDOWN_MIN/MAX_MS.
+   * The travel interval / listing lifecycle: after travelling to a listing, wait
+   * this long before fetching and travelling to the next one. This is the whole
+   * rhythm of the app - one hideout every interval, market permitting. Also how
+   * long the current listing stays on screen. Clamped to TRAVEL_INTERVAL_MIN/MAX.
    */
   autoTravelCooldownMs: number
-  /** Play a sound when a new listing arrives. */
-  soundEnabled: boolean
-  /** How many listings the manual feed holds before evicting the oldest. */
-  bufferSize: number
-  /** How long a listing stays in the manual feed before expiring. */
-  listingTtlMs: number
   /**
    * Keep only instant-buyout listings - those whose whisper token is a
    * Travel-to-Hideout token. Drops mixed and negotiable-price listings.
    */
   instantBuyoutOnly: boolean
+  /** Play a sound when a new listing arrives. */
+  soundEnabled: boolean
 }
 
 export type WhisperState = "idle" | "sending" | "sent" | "error" | "expired"
@@ -90,23 +87,15 @@ export interface AppConfig {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  autoTravelEnabled: false,
-  autoTravelCooldownMs: 15_000,
+  autoTravelEnabled: true,
+  autoTravelCooldownMs: 30_000,
+  instantBuyoutOnly: true,
   soundEnabled: true,
-  bufferSize: 10,
-  listingTtlMs: 180_000,
-  // Defaults off until token-type detection is confirmed against live data, so
-  // it can't silently hide every listing during first-run testing.
-  instantBuyoutOnly: false,
 }
 
-/** Cooldown bounds offered in the UI. */
-export const AUTO_TRAVEL_COOLDOWN_MIN_MS = 5_000
-export const AUTO_TRAVEL_COOLDOWN_MAX_MS = 30_000
-
-/** Buffer bounds for the manual feed. */
-export const BUFFER_SIZE_MIN = 1
-export const BUFFER_SIZE_MAX = 50
+/** Travel interval bounds offered in the UI. */
+export const AUTO_TRAVEL_COOLDOWN_MIN_MS = 10_000
+export const AUTO_TRAVEL_COOLDOWN_MAX_MS = 90_000
 
 /**
  * Each watched search is a separate WebSocket to GGG. Running many at once is
@@ -120,10 +109,13 @@ export type ServerEvent =
   /** Sent once when a client attaches, so it can rehydrate without a refresh. */
   | { type: "snapshot"; listings: Listing[]; statuses: Record<string, SearchStatus> }
   | { type: "listing"; listing: Listing }
-  /** A listing aged out of the manual feed, or was evicted when it filled up. */
+  /** The current listing aged out or was replaced. */
   | { type: "expire"; listingId: string }
-  /** Auto-travel cooldown: scanning is suspended until `until` (unix ms). */
-  | { type: "cooldown"; searchInternalId: string; until: number }
+  /**
+   * A travel happened; ALL searches are paused until `until` (unix ms) so the
+   * user isn't yanked to another hideout while finalising a purchase.
+   */
+  | { type: "cooldown"; until: number }
   | { type: "status"; searchInternalId: string; status: SearchStatus; error?: string }
   | { type: "session"; valid: boolean; message?: string }
   | { type: "log"; level: "info" | "warn" | "error"; message: string }

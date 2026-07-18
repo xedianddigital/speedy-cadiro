@@ -45,7 +45,7 @@ export async function POST(req: Request): Promise<Response> {
     searchId: parsed.searchId,
     title: body.title?.trim() || `${parsed.league} · ${parsed.searchId.slice(0, 6)}`,
     active: body.active ?? true,
-    autoTravel: body.autoTravel ?? false,
+    autoTravel: body.autoTravel ?? true,
   })
 
   await engine.sync()

@@ -1,12 +1,7 @@
 // Global settings: the auto-travel master switch, its cooldown, and sound.
 
 import { getSettings, saveSettings } from "@/lib/poe/config"
-import {
-  AUTO_TRAVEL_COOLDOWN_MAX_MS,
-  AUTO_TRAVEL_COOLDOWN_MIN_MS,
-  BUFFER_SIZE_MAX,
-  BUFFER_SIZE_MIN,
-} from "@/lib/poe/types"
+import { AUTO_TRAVEL_COOLDOWN_MAX_MS, AUTO_TRAVEL_COOLDOWN_MIN_MS } from "@/lib/poe/types"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -19,8 +14,6 @@ interface SettingsPatch {
   autoTravelEnabled?: boolean
   autoTravelCooldownMs?: number
   soundEnabled?: boolean
-  bufferSize?: number
-  listingTtlMs?: number
   instantBuyoutOnly?: boolean
 }
 
@@ -48,13 +41,6 @@ export async function PATCH(req: Request): Promise<Response> {
       AUTO_TRAVEL_COOLDOWN_MIN_MS,
       AUTO_TRAVEL_COOLDOWN_MAX_MS,
     )
-  }
-  if (typeof body.bufferSize === "number" && Number.isFinite(body.bufferSize)) {
-    patch.bufferSize = clamp(body.bufferSize, BUFFER_SIZE_MIN, BUFFER_SIZE_MAX)
-  }
-  if (typeof body.listingTtlMs === "number" && Number.isFinite(body.listingTtlMs)) {
-    // 30s to 15min.
-    patch.listingTtlMs = clamp(body.listingTtlMs, 30_000, 900_000)
   }
 
   return Response.json({ ok: true, settings: await saveSettings(patch) })

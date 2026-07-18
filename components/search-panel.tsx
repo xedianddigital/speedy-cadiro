@@ -10,13 +10,9 @@ import type { SearchStatus, WatchedSearch } from "@/lib/poe/types"
 export function SearchPanel({
   statuses,
   statusErrors,
-  cooldowns,
-  autoTravelEnabled,
 }: {
   statuses: Record<string, SearchStatus>
   statusErrors: Record<string, string>
-  cooldowns: Record<string, number>
-  autoTravelEnabled: boolean
 }) {
   const [searches, setSearches] = useState<WatchedSearch[]>([])
   const [url, setUrl] = useState("")
@@ -125,8 +121,6 @@ export function SearchPanel({
                   <StatusDot status={status} active={s.active} />
                 </div>
 
-                <CooldownBanner until={cooldowns[s.id]} />
-
                 {s.active && statusErrors[s.id] && (
                   <p className="mb-2 rounded bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
                     {statusErrors[s.id]}
@@ -138,33 +132,13 @@ export function SearchPanel({
                     {s.active ? "Pause" : "Resume"}
                   </Button>
 
-                  <label
-                    className={`flex items-center gap-1.5 text-[11px] ${
-                      autoTravelEnabled ? "" : "opacity-50"
-                    }`}
-                    title={
-                      autoTravelEnabled
-                        ? "Instantly whisper the seller on the first match"
-                        : "Enable the global auto-travel switch first"
-                    }
-                  >
-                    <input
-                      type="checkbox"
-                      checked={s.autoTravel}
-                      disabled={!autoTravelEnabled}
-                      onChange={(e) => patch(s.id, { autoTravel: e.target.checked })}
-                      className="accent-amber-500"
-                    />
-                    auto-travel
-                  </label>
-
                   <a
                     href={s.url}
                     target="_blank"
                     rel="noreferrer"
                     className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
                   >
-                    open
+                    open on site
                   </a>
 
                   <button
@@ -180,27 +154,6 @@ export function SearchPanel({
         </ul>
       )}
     </section>
-  )
-}
-
-/** Shown while auto-travel has scanning suspended for this search. */
-function CooldownBanner({ until }: { until?: number }) {
-  const [now, setNow] = useState(() => Date.now())
-
-  useEffect(() => {
-    if (!until || until <= Date.now()) return
-    const t = setInterval(() => setNow(Date.now()), 250)
-    return () => clearInterval(t)
-  }, [until])
-
-  if (!until) return null
-  const left = until - now
-  if (left <= 0) return null
-
-  return (
-    <p className="mb-2 rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-400">
-      Travelled — scanning paused {(left / 1000).toFixed(1)}s
-    </p>
   )
 }
 

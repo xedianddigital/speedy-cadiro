@@ -3,15 +3,13 @@
 import { useCallback, useEffect, useState } from "react"
 import { SessionPanel } from "@/components/session-panel"
 import { SearchPanel } from "@/components/search-panel"
-import { ListingFeed } from "@/components/listing-feed"
+import { CurrentListing } from "@/components/current-listing"
+import { CooldownBar } from "@/components/cooldown-bar"
 import { useLiveFeed } from "@/components/use-live-feed"
 import {
   AUTO_TRAVEL_COOLDOWN_MAX_MS,
   AUTO_TRAVEL_COOLDOWN_MIN_MS,
-  BUFFER_SIZE_MAX,
-  BUFFER_SIZE_MIN,
   DEFAULT_SETTINGS,
-  MAX_ACTIVE_SEARCHES,
   type Settings,
 } from "@/lib/poe/types"
 
@@ -26,6 +24,7 @@ export function Dashboard() {
   }, [])
 
   const feed = useLiveFeed(settings.soundEnabled)
+  const current = feed.listings[0] ?? null
 
   useEffect(() => {
     void (async () => {
@@ -53,16 +52,20 @@ export function Dashboard() {
     }
   }, [])
 
+  const intervalSec = Math.round(settings.autoTravelCooldownMs / 1000)
+
   return (
-    <main className="mx-auto max-w-6xl px-4 py-6">
+    <main className="mx-auto max-w-5xl px-4 py-6">
       <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold">
             PoE Trade Notifier
-            {version && <span className="ml-2 text-xs font-normal text-muted-foreground">v{version}</span>}
+            {version && (
+              <span className="ml-2 text-xs font-normal text-muted-foreground">v{version}</span>
+            )}
           </h1>
           <p className="text-xs text-muted-foreground">
-            Runs locally. Your cookies never leave this machine.
+            Auto-travel to matching listings. Runs locally — nothing leaves this machine.
           </p>
         </div>
         <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -71,17 +74,16 @@ export function Dashboard() {
               feed.connected ? "bg-emerald-500" : "bg-destructive animate-pulse"
             }`}
           />
-          {feed.connected ? "stream live" : "stream down"}
+          {feed.connected ? "connected" : "reconnecting"}
         </span>
       </header>
 
       {sessionReady === false && (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
-          <p className="text-xs font-medium text-amber-400">Step 1: connect your PoE session</p>
+          <p className="text-xs font-medium text-amber-400">Sign in to get started</p>
           <p className="mt-0.5 text-[11px] text-amber-400/80">
-            Click <strong>Detect from browser</strong> below. If that can&apos;t read your cookies
-            it will say why, and you can paste them manually. Searches stay paused until this is
-            done.
+            Use <strong>Sign in to pathofexile.com</strong> below. Searches stay paused until
+            you&apos;re signed in.
           </p>
         </div>
       )}
@@ -92,126 +94,72 @@ export function Dashboard() {
         </p>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[22rem_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[20rem_1fr]">
         <div className="space-y-4">
-          {/* No `key` here: remounting on every change wiped the result message
-              the panel had just set, so detection appeared to do nothing. */}
           <SessionPanel onSessionChange={setSessionReady} />
 
-          <SearchPanel
-            statuses={feed.statuses}
-            statusErrors={feed.statusErrors}
-            cooldowns={feed.cooldowns}
-            autoTravelEnabled={settings.autoTravelEnabled}
-          />
+          <SearchPanel statuses={feed.statuses} statusErrors={feed.statusErrors} />
 
           <section className="rounded-lg border border-border bg-card p-4">
             <h2 className="mb-3 text-sm font-semibold">Settings</h2>
 
-            <label className="flex items-center justify-between gap-3 py-1 text-xs">
-              <span>
-                Auto-travel
-                <span className="ml-1.5 text-muted-foreground">(master switch)</span>
-              </span>
+            <label className="flex items-center justify-between gap-3 py-1.5 text-xs">
+              <span className="font-medium">Auto-travel</span>
               <input
                 type="checkbox"
                 checked={settings.autoTravelEnabled}
                 onChange={(e) => patchSettings({ autoTravelEnabled: e.target.checked })}
-                className="accent-amber-500"
+                className="size-4 accent-emerald-500"
               />
             </label>
 
-            <div className="py-1">
+            <div className="py-1.5">
               <div className="flex items-center justify-between gap-3 text-xs">
-                <span>Pause after travel</span>
-                <span className="text-muted-foreground">
-                  {Math.round(settings.autoTravelCooldownMs / 1000)}s
+                <span>Travel interval</span>
+                <span className="font-medium tabular-nums text-muted-foreground">
+                  {intervalSec}s
                 </span>
               </div>
               <input
                 type="range"
                 min={AUTO_TRAVEL_COOLDOWN_MIN_MS / 1000}
                 max={AUTO_TRAVEL_COOLDOWN_MAX_MS / 1000}
-                step={1}
-                value={Math.round(settings.autoTravelCooldownMs / 1000)}
-                onChange={(e) =>
-                  patchSettings({ autoTravelCooldownMs: Number(e.target.value) * 1000 })
-                }
-                className="mt-1 w-full accent-amber-500"
+                step={5}
+                value={intervalSec}
+                onChange={(e) => patchSettings({ autoTravelCooldownMs: Number(e.target.value) * 1000 })}
+                className="mt-1 w-full accent-emerald-500"
               />
               <p className="text-[11px] text-muted-foreground">
-                After an auto-travel, new listings are ignored for this long.
+                After a travel, all searches pause this long so you can finish buying.
               </p>
             </div>
 
-            <label className="flex items-center justify-between gap-3 py-1 text-xs">
-              <span>
-                Feed size
-                <span className="ml-1.5 text-muted-foreground">(manual travel)</span>
-              </span>
-              <input
-                type="number"
-                min={BUFFER_SIZE_MIN}
-                max={BUFFER_SIZE_MAX}
-                step={1}
-                value={settings.bufferSize}
-                onChange={(e) => patchSettings({ bufferSize: Number(e.target.value) })}
-                className="w-16 rounded-md border border-input bg-background px-2 py-1 text-right text-xs outline-none focus:ring-2 focus:ring-ring"
-              />
-            </label>
-
-            <label className="flex items-center justify-between gap-3 py-1 text-xs">
-              <span>Listing lifetime</span>
-              <span className="flex items-center gap-1">
-                <input
-                  type="number"
-                  min={30}
-                  max={900}
-                  step={30}
-                  value={Math.round(settings.listingTtlMs / 1000)}
-                  onChange={(e) => patchSettings({ listingTtlMs: Number(e.target.value) * 1000 })}
-                  className="w-16 rounded-md border border-input bg-background px-2 py-1 text-right text-xs outline-none focus:ring-2 focus:ring-ring"
-                />
-                <span className="text-muted-foreground">s</span>
-              </span>
-            </label>
-
-            <label className="flex items-center justify-between gap-3 py-1 text-xs">
-              <span>
-                Instant buyout only
-                <span className="ml-1.5 text-muted-foreground">(skip negotiable)</span>
-              </span>
+            <label className="flex items-center justify-between gap-3 py-1.5 text-xs">
+              <span>Instant buyout only</span>
               <input
                 type="checkbox"
                 checked={settings.instantBuyoutOnly}
                 onChange={(e) => patchSettings({ instantBuyoutOnly: e.target.checked })}
-                className="accent-amber-500"
+                className="size-4 accent-emerald-500"
               />
             </label>
 
-            <label className="flex items-center justify-between gap-3 py-1 text-xs">
-              <span>Sound on new listing</span>
+            <label className="flex items-center justify-between gap-3 py-1.5 text-xs">
+              <span>Sound on match</span>
               <input
                 type="checkbox"
                 checked={settings.soundEnabled}
                 onChange={(e) => patchSettings({ soundEnabled: e.target.checked })}
-                className="accent-amber-500"
+                className="size-4 accent-emerald-500"
               />
             </label>
-
-            {settings.autoTravelEnabled && (
-              <p className="mt-2 rounded-md bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-400">
-                Auto-travel whispers sellers automatically on your account. Keep the cooldown
-                sane and don't leave it running unattended.
-              </p>
-            )}
           </section>
 
           {feed.logs.length > 0 && (
             <section className="rounded-lg border border-border bg-card p-4">
               <h2 className="mb-2 text-sm font-semibold">Activity</h2>
               <ul className="space-y-1">
-                {feed.logs.slice(0, 12).map((line) => (
+                {feed.logs.slice(0, 10).map((line) => (
                   <li
                     key={line.id}
                     className={`text-[11px] ${
@@ -230,18 +178,12 @@ export function Dashboard() {
           )}
         </div>
 
-        <div>
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Feed</h2>
-            <span className="text-xs text-muted-foreground">
-              {feed.listings.length}/{settings.bufferSize} · expire after{" "}
-              {Math.round(settings.listingTtlMs / 60000)}m
-            </span>
-          </div>
-          <ListingFeed
-            listings={feed.listings}
+        <div className="space-y-3">
+          <CooldownBar until={feed.cooldownUntil} totalMs={settings.autoTravelCooldownMs} />
+          <CurrentListing
+            listing={current}
+            autoTravelEnabled={settings.autoTravelEnabled}
             onWhisperState={feed.setWhisperState}
-            listingTtlMs={settings.listingTtlMs}
           />
         </div>
       </div>
