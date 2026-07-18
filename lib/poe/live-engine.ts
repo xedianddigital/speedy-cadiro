@@ -507,7 +507,9 @@ function describeClose(code: number): string | undefined {
       // as "try again later" rather than an auth error.
       return "Server said try again later (1013). Usually a stale POESESSID - re-detect your cookies."
     case 1008:
-      return "Server rejected the connection (1008 policy violation)."
+      // Seen when the session and the User-Agent disagree: cf_clearance is
+      // issued against one browser's agent and presented with another's.
+      return "Server rejected the connection (1008). Usually a stale session, or a User-Agent that doesn't match the browser your cookies came from."
     case 1006:
       return "Connection dropped abnormally (1006)."
     default:

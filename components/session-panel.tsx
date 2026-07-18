@@ -26,7 +26,7 @@ export function SessionPanel({
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ kind: "ok" | "warn" | "error"; text: string } | null>(null)
   const [manualOpen, setManualOpen] = useState(false)
-  const [form, setForm] = useState({ poesessid: "", poetoken: "", cfClearance: "" })
+  const [form, setForm] = useState({ poesessid: "", poetoken: "", cfClearance: "", userAgent: "" })
 
   const refresh = async () => {
     try {
@@ -63,7 +63,11 @@ export function SessionPanel({
           text: `Couldn't read your cookies. ${data.error ?? "Unknown reason."}`,
         })
         // Detection is best-effort; surface the fallback instead of making the
-        // user go looking for it.
+        // user go looking for it, prefilled with a matching User-Agent when we
+        // could work one out.
+        if (data.suggestedUserAgent) {
+          setForm((f) => ({ ...f, userAgent: f.userAgent || data.suggestedUserAgent }))
+        }
         setManualOpen(true)
       } else if (!data.valid) {
         setNotice({
@@ -95,7 +99,9 @@ export function SessionPanel({
       const res = await fetch("/api/session", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...form, userAgent: navigator.userAgent }),
+        // Deliberately not navigator.userAgent: inside the desktop shell that
+        // reports Electron, which cf_clearance will never match.
+        body: JSON.stringify(form),
       })
       const data = await res.json()
       if (!res.ok || !data.ok) {
@@ -107,7 +113,7 @@ export function SessionPanel({
         })
       } else {
         setNotice({ kind: "ok", text: "Connected. Session saved and validated." })
-        setForm({ poesessid: "", poetoken: "", cfClearance: "" })
+        setForm({ poesessid: "", poetoken: "", cfClearance: "", userAgent: "" })
         setManualOpen(false)
       }
       await refresh()
@@ -197,11 +203,18 @@ export function SessionPanel({
             </li>
             <li>Copy each value below. Only POESESSID is required.</li>
           </ol>
+          <p className="text-[11px] text-muted-foreground">
+            The User-Agent is prefilled from the browser found on this machine. It must match the
+            browser the cookies came from — Cloudflare ties <code>cf_clearance</code> to it. To be
+            certain, open that browser&apos;s console and copy{" "}
+            <code>navigator.userAgent</code>.
+          </p>
           {(
             [
               ["poesessid", "POESESSID (required)"],
               ["cfClearance", "cf_clearance"],
               ["poetoken", "POETOKEN (optional)"],
+              ["userAgent", "User-Agent — must match the browser above"],
             ] as const
           ).map(([key, label]) => (
             <label key={key} className="block">

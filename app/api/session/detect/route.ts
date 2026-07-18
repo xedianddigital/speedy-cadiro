@@ -5,7 +5,7 @@
 // own navigator.userAgent - an exact UA always beats a reconstructed one,
 // because cf_clearance is bound to it.
 
-import { detectSession } from "@/lib/poe/cookie-detect"
+import { detectSession, detectUserAgent } from "@/lib/poe/cookie-detect"
 import { saveSession } from "@/lib/poe/config"
 import { validateSession } from "@/lib/poe/poe-client"
 import { engine } from "@/lib/poe/live-engine"
@@ -23,10 +23,23 @@ export async function POST(req: Request): Promise<Response> {
     // Body is optional.
   }
 
+  // The desktop shell's own UA identifies Electron, not the browser the cookies
+  // came from, so it can never match what cf_clearance was issued against.
+  if (/Electron\//i.test(clientUserAgent)) clientUserAgent = ""
+
   const result = await detectSession()
   if (!result.session?.poesessid) {
+    // Even when cookies can't be read, the browser's version usually can be -
+    // hand that back so the manual form can be prefilled with a UA that matches.
+    const suggested = await detectUserAgent()
     return Response.json(
-      { ok: false, found: result.found, error: result.reason ?? "No cookies found." },
+      {
+        ok: false,
+        found: result.found,
+        error: result.reason ?? "No cookies found.",
+        suggestedUserAgent: suggested?.userAgent,
+        suggestedUserAgentSource: suggested?.source,
+      },
       { status: 404 },
     )
   }

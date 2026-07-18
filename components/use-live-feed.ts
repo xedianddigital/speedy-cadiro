@@ -21,6 +21,8 @@ export interface LogLine {
 export interface LiveFeed {
   listings: Listing[]
   statuses: Record<string, SearchStatus>
+  /** Last error reported per search, so the UI can explain a red or grey dot. */
+  statusErrors: Record<string, string>
   /** searchInternalId -> unix ms when its auto-travel cooldown ends. */
   cooldowns: Record<string, number>
   logs: LogLine[]
@@ -34,6 +36,7 @@ export function useLiveFeed(soundEnabled: boolean): LiveFeed {
   const [listings, setListings] = useState<Listing[]>([])
   const [statuses, setStatuses] = useState<Record<string, SearchStatus>>({})
   const [cooldowns, setCooldowns] = useState<Record<string, number>>({})
+  const [statusErrors, setStatusErrors] = useState<Record<string, string>>({})
   const [logs, setLogs] = useState<LogLine[]>([])
   const [connected, setConnected] = useState(false)
   const [sessionValid, setSessionValid] = useState<boolean | null>(null)
@@ -89,6 +92,13 @@ export function useLiveFeed(soundEnabled: boolean): LiveFeed {
 
         case "status":
           setStatuses((prev) => ({ ...prev, [event.searchInternalId]: event.status }))
+          setStatusErrors((prev) => {
+            const next = { ...prev }
+            if (event.error) next[event.searchInternalId] = event.error
+            // A healthy connection clears whatever went wrong before it.
+            else if (event.status === "connected") delete next[event.searchInternalId]
+            return next
+          })
           break
 
         case "whisper":
@@ -123,6 +133,7 @@ export function useLiveFeed(soundEnabled: boolean): LiveFeed {
   return {
     listings,
     statuses,
+    statusErrors,
     cooldowns,
     logs,
     connected,

@@ -92,6 +92,7 @@ export function Dashboard() {
 
           <SearchPanel
             statuses={feed.statuses}
+            statusErrors={feed.statusErrors}
             cooldowns={feed.cooldowns}
             autoTravelEnabled={settings.autoTravelEnabled}
           />

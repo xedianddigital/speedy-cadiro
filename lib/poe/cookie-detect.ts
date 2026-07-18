@@ -101,6 +101,38 @@ function chromiumCandidates(): ChromiumPaths[] {
   return out
 }
 
+/**
+ * Copy a live cookie database aside so it can be opened read-only.
+ *
+ * On Windows the browser keeps the file open, and fs.copyFile (CopyFileW) fails
+ * with EBUSY. A plain read succeeds anyway, because SQLite opens its files
+ * allowing other readers - so fall back to read-then-write.
+ *
+ * The -wal and -shm siblings come along when present: a cookie written moments
+ * ago may still live only in the write-ahead log, and opening the main file
+ * without them would miss it or fail outright.
+ */
+async function copyDbForReading(src: string, dest: string): Promise<void> {
+  try {
+    await fs.copyFile(src, dest)
+  } catch {
+    await fs.writeFile(dest, await fs.readFile(src))
+  }
+  for (const suffix of ["-wal", "-shm"]) {
+    try {
+      await fs.writeFile(dest + suffix, await fs.readFile(src + suffix))
+    } catch {
+      // Absent or unreadable; the main database alone is usually enough.
+    }
+  }
+}
+
+async function removeDbCopy(dest: string): Promise<void> {
+  await Promise.all(
+    [dest, `${dest}-wal`, `${dest}-shm`].map((p) => fs.rm(p, { force: true }).catch(() => {})),
+  )
+}
+
 async function exists(p: string): Promise<boolean> {
   try {
     await fs.access(p)
@@ -331,7 +363,7 @@ async function tryChromium(): Promise<DetectResult> {
         const cryptoInfo = await getChromiumCrypto(cand.userData, cand.label)
         // Copy the (possibly locked) DB to a temp file before opening.
         const tmp = path.join(os.tmpdir(), `poe-cookies-${Date.now()}.db`)
-        await fs.copyFile(dbPath, tmp)
+        await copyDbForReading(dbPath, tmp)
         const found: Partial<Record<WantedCookie, string>> = {}
         let appBound = false
         try {
@@ -350,7 +382,7 @@ async function tryChromium(): Promise<DetectResult> {
             }
           }
         } finally {
-          await fs.rm(tmp, { force: true })
+          await removeDbCopy(tmp)
         }
 
         const foundKeys = Object.keys(found) as WantedCookie[]
@@ -432,7 +464,7 @@ async function tryFirefox(): Promise<DetectResult> {
     if (!(await exists(cookiesPath))) continue
     try {
       const tmp = path.join(os.tmpdir(), `poe-ff-${Date.now()}.db`)
-      await fs.copyFile(cookiesPath, tmp)
+      await copyDbForReading(cookiesPath, tmp)
       const found: Partial<Record<WantedCookie, string>> = {}
       try {
         const db = new sqlite(tmp, { readonly: true, fileMustExist: true })
@@ -445,7 +477,7 @@ async function tryFirefox(): Promise<DetectResult> {
           found[row.name] = sanitize(row.value)
         }
       } finally {
-        await fs.rm(tmp, { force: true })
+        await removeDbCopy(tmp)
       }
       const foundKeys = Object.keys(found) as WantedCookie[]
       if (foundKeys.length > 0) {
@@ -499,6 +531,43 @@ function sanitize(value: string): string {
   // POESESSID is a 32-char hex string; cf_clearance/POETOKEN are URL-safe.
   // Strip any leading non-printable bytes.
   return value.replace(/^[\x00-\x1f]+/, "").trim()
+}
+
+/**
+ * Work out the User-Agent of an installed browser without reading any cookies.
+ *
+ * Browser version files stay readable even when the cookie database is locked
+ * or encrypted, so this still works in exactly the cases where detection fails
+ * and the user has to paste cookies by hand. That matters because cf_clearance
+ * is bound to the exact User-Agent: pasting the right cookies with the wrong
+ * agent still gets rejected.
+ */
+export async function detectUserAgent(): Promise<{ userAgent: string; source: string } | null> {
+  for (const cand of chromiumCandidates()) {
+    if (!(await exists(cand.userData))) continue
+    const version = await readChromiumVersion(cand.userData)
+    if (version) {
+      return { userAgent: buildChromeUA(version, cand.label), source: `${cand.label} ${version.split(".")[0]}` }
+    }
+  }
+
+  for (const root of firefoxProfileRoots()) {
+    if (!(await exists(root))) continue
+    let entries: string[]
+    try {
+      entries = (await fs.readdir(root, { withFileTypes: true }))
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
+    } catch {
+      continue
+    }
+    for (const name of entries) {
+      const major = await readFirefoxMajor(path.join(root, name))
+      if (major) return { userAgent: buildFirefoxUA(major), source: `Firefox ${major}` }
+    }
+  }
+
+  return null
 }
 
 /** Try all supported browsers, Chromium first. */

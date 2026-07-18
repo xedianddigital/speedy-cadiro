@@ -9,10 +9,12 @@ import type { SearchStatus, WatchedSearch } from "@/lib/poe/types"
 
 export function SearchPanel({
   statuses,
+  statusErrors,
   cooldowns,
   autoTravelEnabled,
 }: {
   statuses: Record<string, SearchStatus>
+  statusErrors: Record<string, string>
   cooldowns: Record<string, number>
   autoTravelEnabled: boolean
 }) {
@@ -120,10 +122,16 @@ export function SearchPanel({
                       {s.league} · {s.searchId}
                     </p>
                   </div>
-                  <StatusDot status={status} />
+                  <StatusDot status={status} active={s.active} />
                 </div>
 
                 <CooldownBanner until={cooldowns[s.id]} />
+
+                {s.active && statusErrors[s.id] && (
+                  <p className="mb-2 rounded bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+                    {statusErrors[s.id]}
+                  </p>
+                )}
 
                 <div className="flex flex-wrap items-center gap-2">
                   <Button size="sm" variant="outline" onClick={() => patch(s.id, { active: !s.active })}>
@@ -196,11 +204,15 @@ function CooldownBanner({ until }: { until?: number }) {
   )
 }
 
-function StatusDot({ status }: { status: SearchStatus }) {
+function StatusDot({ status, active }: { status: SearchStatus; active: boolean }) {
   const map: Record<SearchStatus, { cls: string; label: string }> = {
     connected: { cls: "bg-emerald-500", label: "connected" },
     connecting: { cls: "bg-amber-500 animate-pulse", label: "connecting" },
-    disconnected: { cls: "bg-muted-foreground", label: "disconnected" },
+    // A dropped socket on an active search is retried, so say so rather than
+    // showing the same grey as a deliberately paused one.
+    disconnected: active
+      ? { cls: "bg-amber-500 animate-pulse", label: "reconnecting" }
+      : { cls: "bg-muted-foreground", label: "disconnected" },
     error: { cls: "bg-destructive", label: "error" },
     idle: { cls: "bg-muted-foreground/50", label: "paused" },
   }
