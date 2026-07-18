@@ -18,11 +18,11 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            target: dist:win
+            platform: --win
             artifact: windows-installer
             path: dist/*.exe
           - os: ubuntu-latest
-            target: dist:linux
+            platform: --linux
             artifact: linux-appimage
             path: dist/*.AppImage
 
@@ -41,10 +41,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build Next standalone bundle
+        run: pnpm prepack:standalone
+
       # electron-builder rebuilds better-sqlite3 against Electron's ABI, which
-      # needs a working native toolchain. Windows runners ship one already.
+      # needs a working native toolchain. The runners ship one already.
+      #
+      # --publish never: electron-builder otherwise tries to publish a release
+      # itself when it detects CI, which needs a token. Releases are attached by
+      # the step below instead.
       - name: Build installer
-        run: pnpm ${{ matrix.target }}
+        run: pnpm exec electron-builder ${{ matrix.platform }} --publish never
         env:
           # Skip code signing: unsigned builds still install, they just show a
           # SmartScreen warning the user has to click through.
