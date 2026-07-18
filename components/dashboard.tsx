@@ -17,7 +17,8 @@ import {
 
 export function Dashboard() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS)
-  const [sessionKey, setSessionKey] = useState(0)
+  /** null while we're still asking the server. */
+  const [sessionReady, setSessionReady] = useState<boolean | null>(null)
 
   const feed = useLiveFeed(settings.soundEnabled)
 
@@ -66,6 +67,17 @@ export function Dashboard() {
         </span>
       </header>
 
+      {sessionReady === false && (
+        <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
+          <p className="text-xs font-medium text-amber-400">Step 1: connect your PoE session</p>
+          <p className="mt-0.5 text-[11px] text-amber-400/80">
+            Click <strong>Detect from browser</strong> below. If that can&apos;t read your cookies
+            it will say why, and you can paste them manually. Searches stay paused until this is
+            done.
+          </p>
+        </div>
+      )}
+
       {feed.sessionValid === false && feed.sessionMessage && (
         <p className="mb-4 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
           {feed.sessionMessage}
@@ -74,7 +86,9 @@ export function Dashboard() {
 
       <div className="grid gap-4 lg:grid-cols-[22rem_1fr]">
         <div className="space-y-4">
-          <SessionPanel key={sessionKey} onChanged={() => setSessionKey((k) => k + 1)} />
+          {/* No `key` here: remounting on every change wiped the result message
+              the panel had just set, so detection appeared to do nothing. */}
+          <SessionPanel onSessionChange={setSessionReady} />
 
           <SearchPanel
             statuses={feed.statuses}

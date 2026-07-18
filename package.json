@@ -15,7 +15,9 @@
     "dist": "pnpm prepack:standalone && electron-builder",
     "dist:win": "pnpm prepack:standalone && electron-builder --win",
     "dist:linux": "pnpm prepack:standalone && electron-builder --linux",
-    "dist:dir": "pnpm prepack:standalone && electron-builder --dir"
+    "dist:dir": "pnpm prepack:standalone && electron-builder --dir",
+    "//rebuild:node": "electron-builder leaves better-sqlite3 compiled for Electron's ABI, which breaks `pnpm dev`. Run this to switch it back.",
+    "rebuild:node": "pnpm rebuild better-sqlite3"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

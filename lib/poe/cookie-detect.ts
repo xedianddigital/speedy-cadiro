@@ -509,17 +509,34 @@ export async function detectSession(): Promise<DetectResult> {
   const firefox = await tryFirefox()
   if (firefox.ok && firefox.session?.poesessid) return firefox
 
-  // Merge reasons for a helpful message.
-  const reason = [chromium.reason, firefox.reason].filter(Boolean).join(" | ")
-  // If Chromium found *some* cookies but not POESESSID, surface that.
+  // If a browser yielded *some* cookies but not POESESSID, that's a login
+  // problem, not a reading problem - say so plainly.
   if (chromium.ok || firefox.ok) {
     const partial = chromium.ok ? chromium : firefox
     return {
       ok: false,
       found: partial.found,
-      reason: `Found ${partial.found.join(", ") || "no"} cookie(s), but POESESSID was missing. Make sure you're logged in at pathofexile.com. ${reason}`,
+      reason: `Found ${partial.found.join(", ")} but not POESESSID, which means you aren't logged in to pathofexile.com in that browser. Log in there, then try again.`,
       session: partial.session,
     }
   }
-  return { ok: false, found: [], reason: reason || "Auto-detect failed. Use manual paste." }
+
+  const details = [chromium.reason, firefox.reason].filter(Boolean).join(" ")
+
+  // Chrome 127+ is the single most common cause on Windows and cannot be worked
+  // around, so lead with it rather than burying it in a merged string.
+  if (/app-bound/i.test(details)) {
+    return {
+      ok: false,
+      found: [],
+      reason:
+        "Chrome 127 and newer encrypt cookies with a key only Chrome itself can use, so they cannot be read by any other program. Either paste your cookies manually below, or log in to pathofexile.com in Firefox and detect again.",
+    }
+  }
+
+  return {
+    ok: false,
+    found: [],
+    reason: `No pathofexile.com cookies found in Chrome, Edge, Brave or Firefox. Make sure you're logged in at pathofexile.com in one of them. (${details})`,
+  }
 }

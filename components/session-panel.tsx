@@ -16,7 +16,12 @@ interface SessionInfo {
   has?: { poesessid: boolean; poetoken: boolean; cfClearance: boolean }
 }
 
-export function SessionPanel({ onChanged }: { onChanged: () => void }) {
+export function SessionPanel({
+  onSessionChange,
+}: {
+  /** Reports whether the stored session is present and accepted by the API. */
+  onSessionChange: (ready: boolean) => void
+}) {
   const [info, setInfo] = useState<SessionInfo | null>(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ kind: "ok" | "warn" | "error"; text: string } | null>(null)
@@ -26,19 +31,23 @@ export function SessionPanel({ onChanged }: { onChanged: () => void }) {
   const refresh = async () => {
     try {
       const res = await fetch("/api/session", { cache: "no-store" })
-      setInfo(await res.json())
+      const data: SessionInfo = await res.json()
+      setInfo(data)
+      onSessionChange(Boolean(data.configured && data.valid))
     } catch {
       setInfo(null)
+      onSessionChange(false)
     }
   }
 
   useEffect(() => {
     void refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const detect = async () => {
     setBusy(true)
-    setNotice(null)
+    setNotice({ kind: "warn", text: "Reading cookies from your browser…" })
     try {
       const res = await fetch("/api/session/detect", {
         method: "POST",
@@ -47,20 +56,33 @@ export function SessionPanel({ onChanged }: { onChanged: () => void }) {
         body: JSON.stringify({ userAgent: navigator.userAgent }),
       })
       const data = await res.json()
+
       if (!res.ok || !data.ok) {
-        setNotice({ kind: "error", text: data.error ?? "Detection failed." })
+        setNotice({
+          kind: "error",
+          text: `Couldn't read your cookies. ${data.error ?? "Unknown reason."}`,
+        })
+        // Detection is best-effort; surface the fallback instead of making the
+        // user go looking for it.
+        setManualOpen(true)
+      } else if (!data.valid) {
+        setNotice({
+          kind: "error",
+          text: `Read cookies from ${data.source}, but pathofexile.com rejected them: ${
+            data.reason ?? "unknown reason"
+          }. Make sure you're logged in there, then try again.`,
+        })
       } else if (data.warning) {
-        setNotice({ kind: "warn", text: data.warning })
+        setNotice({ kind: "warn", text: `Connected, with a caveat: ${data.warning}` })
       } else {
         setNotice({
-          kind: data.valid ? "ok" : "warn",
-          text: data.valid
-            ? `Found ${data.found.join(", ")} in ${data.source}. Session is valid.`
-            : `Read cookies from ${data.source}, but the API rejected them: ${data.reason ?? "unknown"}`,
+          kind: "ok",
+          text: `Connected. Found ${data.found.join(", ")} in ${data.source}.`,
         })
       }
       await refresh()
-      onChanged()
+    } catch (err) {
+      setNotice({ kind: "error", text: `Detection failed: ${(err as Error).message}` })
     } finally {
       setBusy(false)
     }
@@ -68,7 +90,7 @@ export function SessionPanel({ onChanged }: { onChanged: () => void }) {
 
   const saveManual = async () => {
     setBusy(true)
-    setNotice(null)
+    setNotice({ kind: "warn", text: "Checking those cookies with pathofexile.com…" })
     try {
       const res = await fetch("/api/session", {
         method: "POST",
@@ -78,16 +100,19 @@ export function SessionPanel({ onChanged }: { onChanged: () => void }) {
       const data = await res.json()
       if (!res.ok || !data.ok) {
         setNotice({ kind: "error", text: data.error ?? "Could not save." })
-      } else {
+      } else if (!data.valid) {
         setNotice({
-          kind: data.valid ? "ok" : "warn",
-          text: data.valid ? "Session saved and validated." : `Saved, but rejected: ${data.reason}`,
+          kind: "error",
+          text: `Saved, but pathofexile.com rejected them: ${data.reason ?? "unknown reason"}.`,
         })
+      } else {
+        setNotice({ kind: "ok", text: "Connected. Session saved and validated." })
         setForm({ poesessid: "", poetoken: "", cfClearance: "" })
         setManualOpen(false)
       }
       await refresh()
-      onChanged()
+    } catch (err) {
+      setNotice({ kind: "error", text: `Could not save: ${(err as Error).message}` })
     } finally {
       setBusy(false)
     }
@@ -97,9 +122,8 @@ export function SessionPanel({ onChanged }: { onChanged: () => void }) {
     setBusy(true)
     try {
       await fetch("/api/session", { method: "DELETE" })
-      setNotice(null)
+      setNotice({ kind: "warn", text: "Session cleared." })
       await refresh()
-      onChanged()
     } finally {
       setBusy(false)
     }
@@ -161,10 +185,18 @@ export function SessionPanel({ onChanged }: { onChanged: () => void }) {
 
       {manualOpen && (
         <div className="mt-3 space-y-2">
-          <p className="text-xs text-muted-foreground">
-            In your browser on pathofexile.com: DevTools → Application → Cookies. Copy the values.
-            POETOKEN is optional.
-          </p>
+          <ol className="list-decimal space-y-0.5 pl-4 text-[11px] text-muted-foreground">
+            <li>Open pathofexile.com in your browser and make sure you&apos;re logged in.</li>
+            <li>
+              Press <kbd className="rounded border border-border px-1">F12</kbd> → the{" "}
+              <strong>Application</strong> tab (Chrome/Edge) or <strong>Storage</strong> tab
+              (Firefox).
+            </li>
+            <li>
+              Expand <strong>Cookies</strong> → <code>https://www.pathofexile.com</code>.
+            </li>
+            <li>Copy each value below. Only POESESSID is required.</li>
+          </ol>
           {(
             [
               ["poesessid", "POESESSID (required)"],

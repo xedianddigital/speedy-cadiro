@@ -50,6 +50,10 @@ pnpm dist:dir     # unpacked app, no installer (fastest for testing)
 Installers for tagged releases are built on GitHub Actions; see
 `.github/workflows/build.yml`.
 
+> After running any `dist:*` script, `pnpm dev` will fail to read cookies:
+> electron-builder recompiles `better-sqlite3` against Electron's ABI, which
+> plain Node can't load. Run `pnpm rebuild:node` to switch it back.
+
 ---
 
 ### Cookie detection on Windows
