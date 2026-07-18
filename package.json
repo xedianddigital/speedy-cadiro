@@ -1,6 +1,6 @@
 {
   "name": "poe-trade-notifier",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Local live-search notifier for Path of Exile trade",
   "author": "xedianddigital",
@@ -11,7 +11,7 @@
     "start": "next start",
     "lint": "eslint .",
     "electron": "electron .",
-    "prepack:standalone": "next build && node scripts/prepare-standalone.mjs",
+    "prepack:standalone": "node scripts/gen-build-info.mjs && next build && node scripts/prepare-standalone.mjs",
     "dist": "pnpm prepack:standalone && electron-builder",
     "dist:win": "pnpm prepack:standalone && electron-builder --win",
     "dist:linux": "pnpm prepack:standalone && electron-builder --linux",

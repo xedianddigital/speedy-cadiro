@@ -366,7 +366,16 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
 
-  ipcMain.handle('poe:version', () => app.getVersion())
+  ipcMain.handle('poe:version', () => {
+    // Show version plus the build's commit so any two builds are distinguishable.
+    let commit = ''
+    try {
+      commit = require('./build-info.json').commit
+    } catch {
+      // No build-info in dev; just show the version.
+    }
+    return commit ? `${app.getVersion()} (${commit})` : app.getVersion()
+  })
   ipcMain.handle('poe:uninstall', () => runUninstall())
 
   ipcMain.handle('poe:login', async () => {

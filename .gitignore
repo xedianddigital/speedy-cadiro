@@ -13,5 +13,8 @@ next-env.d.ts
 # Electron build output (installers, unpacked apps)
 dist/
 
+# Generated per build
+electron/build-info.json
+
 # Local app data (contains your PoE session cookies - never commit)
 .data/
