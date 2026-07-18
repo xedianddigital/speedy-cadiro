@@ -76,8 +76,6 @@ interface Connection {
    * reconnecting on every cooldown is exactly the pattern that earns a 1013.
    */
   pausedUntil: number
-  /** Which cookie set this connection is currently presenting. */
-  cookieVariant: CookieVariant
 }
 
 interface CachedListing {
@@ -185,7 +183,6 @@ class LiveEngine {
       flushTimer: null,
       fetching: false,
       pausedUntil: 0,
-      cookieVariant: "full",
     }
     this.connections.set(search.id, conn)
     await this.connect(conn)
@@ -226,8 +223,8 @@ class LiveEngine {
     try {
       ws = new WebSocket(url, {
         headers: {
-          Cookie: cookieHeader(session, conn.cookieVariant),
-          "User-Agent": session.userAgent || "poe-lean-notifier/1.0",
+          Cookie: liveCookieHeader(session),
+          "User-Agent": cleanUserAgent(session.userAgent),
           Origin: "https://www.pathofexile.com",
         },
       })
@@ -241,10 +238,7 @@ class LiveEngine {
 
     ws.on("open", () => {
       this.setStatus(conn, "connected")
-      this.log(
-        "info",
-        `Live search connected: ${conn.search.title} (${describeVariant(conn.cookieVariant)})`,
-      )
+      this.log("info", `Live search connected: ${conn.search.title}`)
 
       // Don't trust "open" alone - wait for the socket to prove it survives.
       conn.stableTimer = setTimeout(() => {
@@ -302,32 +296,23 @@ class LiveEngine {
 
     const backoff = Math.min(BACKOFF_BASE_MS * 2 ** conn.attempts, BACKOFF_MAX_MS)
     // 1013 (try again later) and 1008 (policy violation) are GGG telling us to
-    // stop. Honour that with a real pause rather than the usual ramp.
+    // stop. Honour that with a real pause rather than the usual ramp - retrying
+    // fast is itself a likely cause of a policy close.
     const throttled = code === 1013 || code === 1008
-    let delay = throttled ? Math.max(backoff, THROTTLED_MIN_MS) : backoff
+    const delay = throttled ? Math.max(backoff, THROTTLED_MIN_MS) : backoff
 
-    // Step down the cookie set once per full cycle in case cf_clearance is the
-    // problem - but keep the full penalty delay between attempts. Retrying fast
-    // is itself a likely cause of a policy close (GGG rejects rapid reconnects
-    // and duplicate live connections), so the previous socket must be given
-    // time to age out server-side.
-    if (throttled) {
-      const next = COOKIE_VARIANTS[COOKIE_VARIANTS.indexOf(conn.cookieVariant) + 1]
-      if (next) {
-        conn.cookieVariant = next
-        this.log("warn", `${conn.search.title}: will retry ${describeVariant(next)} after backing off.`)
-      } else {
-        // Cycled every cookie set and still refused. More retries won't help;
-        // stop and let the user act rather than loop indefinitely.
-        conn.stopping = true
-        this.setStatus(
-          conn,
-          "error",
-          "Live search keeps getting rejected (1008/1013) on every cookie set. Your session may be invalid, or this IP/User-Agent is temporarily blocked. Re-enter your session or wait a few minutes, then resume.",
-        )
-        this.log("error", `${conn.search.title}: giving up after trying every cookie set.`)
-        return
-      }
+    // Give up after enough refusals rather than looping forever. The session is
+    // known good once we've seen auth:true, so this is a rate/policy wall the
+    // user must wait out.
+    if (throttled && conn.attempts >= 4) {
+      conn.stopping = true
+      this.setStatus(
+        conn,
+        "error",
+        "Live search keeps getting rejected (1008/1013). This IP is likely rate-limited from too many recent connections - wait a few minutes, then resume. Avoid using the official trade site on this account at the same time.",
+      )
+      this.log("error", `${conn.search.title}: giving up after repeated policy closes.`)
+      return
     }
 
     conn.attempts += 1
@@ -537,32 +522,39 @@ class LiveEngine {
 }
 
 /**
- * Cookie sets to try on the live socket, most complete first.
- *
- * A cf_clearance is bound to the exact browser that earned it. Presenting one
- * that doesn't match gets the connection rejected, whereas simply omitting it
- * is accepted - so when the server keeps closing us with a policy error, drop
- * cookies rather than keep insisting on the full set.
+/**
+ * Cookies for the live socket. Working reference clients send only POESESSID
+ * (plus POETOKEN); cf_clearance is neither needed nor sent, and the session
+ * authenticates on POESESSID alone.
  */
-const COOKIE_VARIANTS = ["full", "no-cf", "session-only"] as const
-type CookieVariant = (typeof COOKIE_VARIANTS)[number]
-
-function cookieHeader(session: Session, variant: CookieVariant = "full"): string {
+function liveCookieHeader(session: Session): string {
   const parts = [`POESESSID=${session.poesessid}`]
-  if (variant !== "session-only" && session.poetoken) parts.push(`POETOKEN=${session.poetoken}`)
-  if (variant === "full" && session.cfClearance) parts.push(`cf_clearance=${session.cfClearance}`)
+  if (session.poetoken) parts.push(`POETOKEN=${session.poetoken}`)
   return parts.join("; ")
 }
 
-function describeVariant(variant: CookieVariant): string {
-  switch (variant) {
-    case "no-cf":
-      return "without cf_clearance"
-    case "session-only":
-      return "with POESESSID only"
-    default:
-      return "with all cookies"
-  }
+/**
+ * A browser-shaped User-Agent for outbound PoE requests.
+ *
+ * Electron bakes the app's own product name and an "Electron/x" token into its
+ * default agent (e.g. "... poe-trade-notifier/0.2.0 ... Electron/43.1.1 ...").
+ * GGG's live search accepts the session and then closes the connection with a
+ * 1008 policy violation when the agent advertises an automated client like
+ * that. Strip those tokens so the agent reads as an ordinary browser, matching
+ * what a real trade tab sends.
+ */
+const FALLBACK_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
+function cleanUserAgent(ua: string | undefined): string {
+  if (!ua) return FALLBACK_UA
+  const cleaned = ua
+    .replace(/\s*Electron\/[\d.]+/gi, "")
+    .replace(/\s*poe-[a-z-]+\/[\d.]+/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+  // Only trust the cleaned value if it still looks like a real browser agent.
+  return /Chrome\/\d|Firefox\/\d|Safari\/\d/.test(cleaned) ? cleaned : FALLBACK_UA
 }
 
 function clampCooldown(ms: number): number {
@@ -577,9 +569,9 @@ function describeClose(code: number): string | undefined {
       // as "try again later" rather than an auth error.
       return "Server said try again later (1013). Usually a stale POESESSID - re-detect your cookies."
     case 1008:
-      // Seen when the session and the User-Agent disagree: cf_clearance is
-      // issued against one browser's agent and presented with another's.
-      return "Server rejected the connection (1008). Usually a stale session, or a User-Agent that doesn't match the browser your cookies came from."
+      // The session authenticates (auth:true) and is then policy-closed: rate
+      // limiting from too many recent connections is the usual cause.
+      return "Server closed with a policy violation (1008). Usually rate limiting from too many recent live-search connections."
     case 1006:
       return "Connection dropped abnormally (1006)."
     default:
