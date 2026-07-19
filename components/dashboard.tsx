@@ -190,9 +190,9 @@ export function Dashboard() {
         <div className="flex flex-col gap-3">
           <CooldownBar until={feed.cooldownUntil} totalMs={settings.autoTravelCooldownMs} />
           {/* Fixed height reserved up front for the biggest a card gets (long
-              mod list), so the layout doesn't jump between the empty state,
-              a short card and a long one. */}
-          <div className="min-h-[28rem]">
+              mod list, now internally scroll-capped), so the layout doesn't
+              jump between the empty state, a short card and a long one. */}
+          <div className="min-h-[24rem]">
             {/* Keyed by listing id: if this listing's data ever crashes the card,
                 the next different listing remounts a clean instance rather than
                 reusing broken state. */}
@@ -217,7 +217,7 @@ export function Dashboard() {
           {/* Always shown (not just once there's something to log) so the
               layout is stable from the first launch, and grows to fill
               whatever's left so its bottom lines up with the sidebar's. */}
-          <section className="flex min-h-0 flex-1 flex-col rounded-lg border border-border bg-card p-4">
+          <section className="flex min-h-[16rem] flex-1 flex-col rounded-lg border border-border bg-card p-4">
             <h2 className="mb-2 shrink-0 text-sm font-semibold">Activity</h2>
             {feed.logs.length === 0 ? (
               <p className="text-xs text-muted-foreground">Nothing yet.</p>
