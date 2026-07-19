@@ -61,6 +61,7 @@ function Card({
 
   const name = listing.itemName || listing.itemType || "Unknown item"
   const subtitle = listing.itemName && listing.itemType ? listing.itemType : null
+  const mods = listing.mods ?? []
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
@@ -83,11 +84,11 @@ function Card({
           {listing.sellerCharacter || listing.sellerAccount || "—"}
         </p>
 
-        {listing.mods.length > 0 && (
+        {mods.length > 0 && (
           <ul className="space-y-0.5 rounded-md bg-muted/40 p-2.5">
-            {listing.mods.map((mod, i) => (
+            {mods.map((mod, i) => (
               <li key={i} className="text-[11px] leading-tight text-foreground/80">
-                {mod}
+                {typeof mod === "string" ? mod : String(mod)}
               </li>
             ))}
           </ul>

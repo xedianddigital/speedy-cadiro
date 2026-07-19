@@ -9,7 +9,19 @@ const { app, BrowserWindow, Menu, ipcMain, session, shell, dialog } = require('e
 const path = require('node:path')
 const http = require('node:http')
 const https = require('node:https')
+const fs = require('node:fs')
 const { fork, spawn } = require('node:child_process')
+
+/**
+ * Renderer crashes are otherwise invisible in a packaged build - there's no
+ * terminal to see console.error in. Append them here instead, so a user who
+ * hits one can send us something more useful than "it went black."
+ */
+const CRASH_LOG_PATH = path.join(app.getPath('userData'), 'crash.log')
+function logCrash(message, stack) {
+  const entry = `[${new Date().toISOString()}] ${message}\n${stack ? stack + '\n' : ''}\n`
+  fs.appendFile(CRASH_LOG_PATH, entry, () => {})
+}
 
 /**
  * Cookies live in their own persistent partition so a login survives restarts
@@ -479,7 +491,8 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.handle('poe:report-error', (_event, { message, stack }) => {
     console.error('[renderer]', message)
     if (stack) console.error(stack)
-    return { ok: true }
+    logCrash(message, stack)
+    return { ok: true, logPath: CRASH_LOG_PATH }
   })
 
   ipcMain.handle('poe:login', async () => {

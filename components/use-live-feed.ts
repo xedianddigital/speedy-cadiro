@@ -48,6 +48,12 @@ export function useLiveFeed(soundEnabled: boolean, soundName: string): LiveFeed 
   const soundRef = useRef({ enabled: soundEnabled, name: soundName })
   soundRef.current = { enabled: soundEnabled, name: soundName }
 
+  // Two watched searches can both match the same PoE listing at once, so the
+  // server can legitimately emit two "listing" events with the same id. The
+  // state update below already no-ops on a duplicate id, but without this the
+  // sound cue fired every time regardless - so it played twice for one match.
+  const knownIdsRef = useRef<Set<string>>(new Set())
+
   const setWhisperState = useCallback((listingId: string, state: WhisperState) => {
     setListings((prev) =>
       prev.map((l) => (l.id === listingId ? { ...l, whisperState: state } : l)),
@@ -72,18 +78,21 @@ export function useLiveFeed(soundEnabled: boolean, soundName: string): LiveFeed 
         case "snapshot":
           setListings(event.listings)
           setStatuses(event.statuses)
+          knownIdsRef.current = new Set(event.listings.map((l) => l.id))
           break
 
         case "listing":
+          // A duplicate id (two searches matching the same item) must not
+          // replay the sound or re-insert the card.
+          if (knownIdsRef.current.has(event.listing.id)) break
+          knownIdsRef.current.add(event.listing.id)
           // Newest first; the server caps how many survive.
-          setListings((prev) => {
-            if (prev.some((l) => l.id === event.listing.id)) return prev
-            return [event.listing, ...prev]
-          })
+          setListings((prev) => [event.listing, ...prev])
           if (soundRef.current.enabled) playSound(soundRef.current.name)
           break
 
         case "expire":
+          knownIdsRef.current.delete(event.listingId)
           setListings((prev) => prev.filter((l) => l.id !== event.listingId))
           break
 

@@ -155,8 +155,8 @@ export function Dashboard() {
               className="mt-1 w-full accent-emerald-500"
             />
             <p className="mt-0.5 text-[10.5px] leading-tight text-muted-foreground">
-              How long a match stays on screen, and how long searches pause after each travel so you
-              can finish buying.
+              Cooldown before the next match can trigger auto-travel, so you can finish the trade
+              without interruption.
             </p>
           </section>
 
@@ -169,7 +169,7 @@ export function Dashboard() {
                 {feed.logs.slice(0, 10).map((line) => (
                   <li
                     key={line.id}
-                    className={`text-[11px] ${
+                    className={`flex gap-2 text-[11px] ${
                       line.level === "error"
                         ? "text-destructive"
                         : line.level === "warn"
@@ -177,7 +177,14 @@ export function Dashboard() {
                           : "text-muted-foreground"
                     }`}
                   >
-                    {line.message}
+                    <span className="shrink-0 tabular-nums opacity-60">
+                      {new Date(line.at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
+                    </span>
+                    <span>{line.message}</span>
                   </li>
                 ))}
               </ul>
@@ -192,11 +199,14 @@ export function Dashboard() {
               reusing broken state. */}
           <ErrorBoundary
             key={current?.id ?? "none"}
-            fallback={() => (
+            fallback={(error) => (
               <div className="rounded-xl border border-dashed border-destructive/40 p-6 text-center">
                 <p className="text-sm font-medium text-destructive">Couldn&apos;t display this listing.</p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   The rest of the app is unaffected - this clears automatically on the next match.
+                </p>
+                <p className="mt-2 rounded bg-muted/40 px-2 py-1 font-mono text-[10px] text-muted-foreground">
+                  {error.message}
                 </p>
               </div>
             )}
