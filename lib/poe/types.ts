@@ -85,7 +85,7 @@ export interface AppConfig {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  autoTravelCooldownMs: 30_000,
+  autoTravelCooldownMs: 20_000,
   soundEnabled: true,
   soundName: "chime",
 }
