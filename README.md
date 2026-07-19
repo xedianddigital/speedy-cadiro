@@ -1,5 +1,7 @@
 # SpeedyCadiro
 
+![Portal](portal.png)
+
 The shortest path from a Path of Exile trade listing to standing in the seller's
 hideout to buy it.
 
@@ -65,30 +67,6 @@ live-search notifiers, but automated whispering sits in a grey area of their
 terms. It is deliberately conservative — one connection per search, it obeys the
 rate limits pathofexile.com publishes, and it never hammers reconnects — but
 use it sensibly and don't leave it running unattended.
-
----
-
-## Running from source
-
-Requires **Node.js 20.9+**.
-
-```bash
-corepack enable pnpm
-pnpm install
-pnpm dev        # http://localhost:3000 in a browser
-pnpm electron   # or run the desktop shell against the dev server
-```
-
-Build installers:
-
-```bash
-pnpm dist:win     # Windows installer  -> dist/
-pnpm dist:linux   # Linux AppImage     -> dist/
-pnpm dist:dir     # unpacked app, no installer (fastest to test)
-```
-
-Tagging a release (`v0.5.0`) builds Windows and Linux installers on GitHub
-Actions and attaches them to a GitHub Release; see `.github/workflows/build.yml`.
 
 ---
 
