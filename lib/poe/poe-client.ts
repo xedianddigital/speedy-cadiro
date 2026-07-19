@@ -149,7 +149,7 @@ function stringifyMod(mod: unknown): string {
   if (typeof mod === "string") return mod
   if (mod && typeof mod === "object") {
     const obj = mod as Record<string, unknown>
-    for (const key of ["text", "name", "mod", "value"]) {
+    for (const key of ["description", "text", "name", "mod", "value"]) {
       if (typeof obj[key] === "string") return obj[key] as string
     }
     try {

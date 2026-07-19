@@ -10,6 +10,14 @@ export function CooldownBar({ until, totalMs }: { until: number | null; totalMs:
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
+    // Resync immediately on every new `until`, not just while ticking: `now`
+    // otherwise stays pinned to whenever the last interval tick happened,
+    // which (if the new deadline is already at/near "now") produces a
+    // `remaining` that's stale but still positive and then never updates
+    // again, since the guard below correctly declines to start a new
+    // interval for a deadline that's already passed - the bar looked frozen
+    // instead of clearing.
+    setNow(Date.now())
     if (!until || until <= Date.now()) return
     const t = setInterval(() => setNow(Date.now()), 200)
     return () => clearInterval(t)

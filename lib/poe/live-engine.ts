@@ -55,14 +55,12 @@ const FETCH_DEBOUNCE_MS = 0
 const EXPIRY_SWEEP_MS = 5_000
 
 /**
- * Hard cap on how long a whisper is allowed to take before it's treated as
- * failed. The whisper itself is fast; what's actually slow is the shared rate
- * limiter's queue (see rate-limit.ts) - a busy queue can otherwise leave a
- * "travelling" card, and every search paused, for many seconds waiting on a
- * request that may not even have gone out yet. 1-2s is the normal case; 3s is
- * already past the point where the user should just get their searches back.
+ * A physical listing matched by more than one of the user's own watched
+ * searches arrives as separate, independent events - same seller/item/price,
+ * different fetch calls. Without this it re-caches, re-sounds and attempts a
+ * second whisper for what is, to the user, the exact same match.
  */
-const WHISPER_TIMEOUT_MS = 3000
+const DUPLICATE_MATCH_WINDOW_MS = 5_000
 
 interface Connection {
   search: WatchedSearch
@@ -472,6 +470,11 @@ class LiveEngine {
       return
     }
 
+    if (this.isDuplicateOfCurrent(listing)) {
+      this.log("info", `Skipped duplicate match (already showing): ${listing.itemName || listing.itemType}`)
+      return
+    }
+
     this.cache(listing, conn.search)
     this.emit({ type: "listing", listing })
 
@@ -490,14 +493,17 @@ class LiveEngine {
     this.emit({ type: "cooldown", until: this.travelPausedUntil })
     this.log("info", `Travelling to ${listing.itemName || listing.itemType} - all searches paused ${Math.round(cooldown / 1000)}s.`)
 
-    // The token was just issued, so it is fresh - whisper immediately.
+    // The token was just issued, so it is fresh - whisper immediately. This
+    // can legitimately take several seconds if the shared rate limiter (see
+    // rate-limit.ts) is mid-backoff - that's the pacing working as intended
+    // to keep the account off Cloudflare/GGG's radar, not a stuck request, so
+    // it is awaited in full rather than raced against a deadline. Racing it
+    // previously meant declaring a travel "failed" and resetting the cooldown
+    // while the real request was still queued and later succeeded anyway -
+    // worse than just waiting.
     this.emit({ type: "whisper", listingId: listing.id, state: "sending" })
     try {
-      await withTimeout(
-        sendWhisper(session, listing.whisperToken, conn.search.league, conn.search.searchId),
-        WHISPER_TIMEOUT_MS,
-        `Auto-travel took longer than ${Math.round(WHISPER_TIMEOUT_MS / 1000)}s.`,
-      )
+      await sendWhisper(session, listing.whisperToken, conn.search.league, conn.search.searchId)
       listing.whisperState = "sent"
       listing.autoTravelled = true
       this.emit({ type: "whisper", listingId: listing.id, state: "sent" })
@@ -510,21 +516,32 @@ class LiveEngine {
         state: "error",
         message: (err as Error).message,
       })
-      this.log(
-        "warn",
-        `Auto-travel to ${listing.itemName || listing.itemType} didn't complete promptly (${(err as Error).message}) - treating as failed.`,
-      )
-      // A travel that didn't clearly complete in time isn't worth making the
-      // user sit out the full purchase-window cooldown for. Give the searches
-      // back immediately and drop the stale card rather than leaving them
-      // staring at a "travelling…" listing that may never resolve.
-      this.travelPausedUntil = Date.now()
-      this.emit({ type: "cooldown", until: this.travelPausedUntil })
-      if (this.listings.get(listing.id)?.listing === listing) {
-        this.listings.delete(listing.id)
-        this.emit({ type: "expire", listingId: listing.id })
-      }
     }
+  }
+
+  /**
+   * True when `listing` is almost certainly the same physical PoE listing as
+   * the one currently cached, just reported by a second watched search. The
+   * fetch id isn't reliable for this - it appears to be scoped per query, so
+   * the same real listing can arrive with a different id per search. Seller
+   * identity plus item/price is the stable signal instead. Requires an actual
+   * seller match (not just both being blank/private) so two different
+   * anonymous sellers of the same common currency don't get collapsed.
+   */
+  private isDuplicateOfCurrent(listing: Listing): boolean {
+    const current = [...this.listings.values()][0]?.listing
+    if (!current) return false
+    if (Date.now() - current.receivedAt > DUPLICATE_MATCH_WINDOW_MS) return false
+    const sameSeller =
+      (listing.sellerAccount != null && listing.sellerAccount === current.sellerAccount) ||
+      (listing.sellerCharacter != null && listing.sellerCharacter === current.sellerCharacter)
+    if (!sameSeller) return false
+    return (
+      listing.itemName === current.itemName &&
+      listing.itemType === current.itemType &&
+      listing.priceAmount === current.priceAmount &&
+      listing.priceCurrency === current.priceCurrency
+    )
   }
 
   /** Only the current listing is kept: this app shows one travel target at a time. */
@@ -572,11 +589,7 @@ class LiveEngine {
         return { ok: false, message: "Listing is gone." }
       }
 
-      await withTimeout(
-        sendWhisper(session, fresh.whisperToken, search.league, search.searchId),
-        WHISPER_TIMEOUT_MS,
-        `Travel took longer than ${Math.round(WHISPER_TIMEOUT_MS / 1000)}s.`,
-      )
+      await sendWhisper(session, fresh.whisperToken, search.league, search.searchId)
 
       cached.listing.whisperToken = fresh.whisperToken
       cached.listing.tokenExpMs = fresh.tokenExpMs
@@ -643,28 +656,6 @@ function describeClose(code: number): string | undefined {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/**
- * Race a promise against a deadline. The underlying call (e.g. a whisper
- * still sitting in the rate limiter's queue) isn't cancelled - it may still
- * complete later and mutate `listing` - but the caller stops waiting on it
- * and can treat the attempt as failed immediately.
- */
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), ms)
-    promise.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      (err) => {
-        clearTimeout(timer)
-        reject(err)
-      },
-    )
-  })
 }
 
 // Survive dev-mode hot reloads.
