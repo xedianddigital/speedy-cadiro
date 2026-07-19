@@ -131,7 +131,7 @@ export function SearchPanel({
           <Button
             size="sm"
             variant="outline"
-            className="flex-1"
+            className="flex-1 text-amber-400"
             onClick={() => void setAllActive(false)}
             disabled={busy || searches.every((s) => !s.active)}
           >
@@ -140,7 +140,7 @@ export function SearchPanel({
           <Button
             size="sm"
             variant="outline"
-            className="flex-1"
+            className="flex-1 text-emerald-400"
             onClick={() => void setAllActive(true)}
             disabled={busy || searches.every((s) => s.active)}
           >
