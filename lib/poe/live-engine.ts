@@ -519,14 +519,15 @@ class LiveEngine {
     this.emit({ type: "cooldown", until: this.travelPausedUntil })
     this.log("info", `Travelling to ${listing.itemName || listing.itemType} - all searches paused ${Math.round(cooldown / 1000)}s.`)
 
-    // The token was just issued, so it is fresh - whisper immediately. This
-    // can legitimately take several seconds if the shared rate limiter (see
-    // rate-limit.ts) is mid-backoff - that's the pacing working as intended
-    // to keep the account off Cloudflare/GGG's radar, not a stuck request, so
-    // it is awaited in full rather than raced against a deadline. Racing it
-    // previously meant declaring a travel "failed" and resetting the cooldown
-    // while the real request was still queued and later succeeded anyway -
-    // worse than just waiting.
+    // The token was just issued, so it is fresh - whisper immediately, and
+    // the send really is immediate: sendWhisper deliberately bypasses the
+    // shared limiter queue (see poe-client.ts). When it sat in that queue the
+    // POST - which is the teleport itself - fired 13-17s late, past this very
+    // travel window, jumping the user to the PREVIOUS listing's seller right
+    // as the next card appeared: the consistent one-step offset. Still await
+    // it in full (no timeout race - see 0.6.3/0.6.4): a slow response now
+    // means the network, not a queue, and declaring it failed early resets
+    // the cooldown while the travel may still land.
     this.emit({ type: "whisper", listingId: listing.id, state: "sending" })
     try {
       await sendWhisper(session, listing.whisperToken, conn.search.league, conn.search.searchId)

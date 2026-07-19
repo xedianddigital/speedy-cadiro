@@ -286,7 +286,17 @@ export async function sendWhisper(
     league && searchId
       ? `${BASE}/trade/search/${encodeURIComponent(league)}/${searchId}`
       : `${BASE}/trade`
-  const res = await paced(`${BASE}/api/trade/whisper`, {
+
+  // Send immediately, NOT through the paced queue - same reasoning as /fetch
+  // above, but stronger: this POST *is* the teleport. Queued behind the
+  // limiter's conservative spacing it went out 13-17s late, past the travel
+  // window it belonged to, so the jump landed while the NEXT listing was
+  // already on screen - the "teleported to the previous seller" offset. The
+  // whisper rate is already capped far below any published budget by the
+  // global travel cooldown (at least 10s between travels), and a 429 here
+  // surfaces as a failed travel instead of a silent, late, wrong one. Still
+  // feed the headers back so the limiter's picture of the budget stays fresh.
+  const res = await fetch(`${BASE}/api/trade/whisper`, {
     method: "POST",
     headers: {
       ...baseHeaders(session, referer),
@@ -295,6 +305,7 @@ export async function sendWhisper(
     body: JSON.stringify({ token }),
     cache: "no-store",
   })
+  rateLimiter.observe(res)
   const text = await res.text()
 
   if (res.status === 429) {

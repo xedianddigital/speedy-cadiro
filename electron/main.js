@@ -422,6 +422,9 @@ function createWindow() {
     backgroundColor: '#0a0a0a',
     show: false,
     title: 'SpeedyCadiro',
+    // Window/taskbar icon for dev mode and Linux. Packaged Windows builds get
+    // theirs from build/icon.ico via electron-builder; macOS ignores this.
+    icon: path.join(__dirname, 'icon.png'),
     webPreferences: {
       // The renderer only talks to the local server over HTTP; it needs no
       // Node access of its own beyond the login bridge.
