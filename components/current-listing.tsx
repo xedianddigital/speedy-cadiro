@@ -85,7 +85,7 @@ function Card({
         </p>
 
         {mods.length > 0 && (
-          <ul className="space-y-0.5 rounded-md bg-muted/40 p-2.5">
+          <ul className="max-h-48 space-y-0.5 overflow-y-auto rounded-md bg-muted/40 p-2.5">
             {mods.map((mod, i) => (
               <li key={i} className="text-[11px] leading-tight text-foreground/80">
                 {typeof mod === "string" ? mod : String(mod)}

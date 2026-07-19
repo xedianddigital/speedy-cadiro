@@ -489,6 +489,14 @@ class LiveEngine {
       return
     }
 
+    // While the purchase window is open, this must be total silence: no new
+    // card, no cache update, no sound - not just no second whisper. This used
+    // to only gate the whisper below, so a match arriving mid-pause still
+    // replaced the on-screen card (and any second, third match right behind
+    // it did too), which is exactly the "listing 1, 2, 3 within a few
+    // seconds" churn during an active cooldown that should show nothing.
+    if (Date.now() < this.travelPausedUntil) return
+
     if (this.isDuplicateOfCurrent(listing)) {
       this.log("info", `Skipped duplicate match (already showing): ${listing.itemName || listing.itemType}`)
       return
@@ -501,7 +509,6 @@ class LiveEngine {
     // search is how the user stops being moved.
     if (!conn.search.autoTravel) return
     if (!listing.whisperToken) return
-    if (Date.now() < this.travelPausedUntil) return
 
     // Arm the GLOBAL cooldown before the whisper: every search pauses, so a
     // match elsewhere can't travel the user away mid-purchase, and a burst in
