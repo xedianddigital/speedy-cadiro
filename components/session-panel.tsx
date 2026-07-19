@@ -1,7 +1,7 @@
 "use client"
 
-// Session setup: sign in to pathofexile.com inside the app (the reliable path,
-// works on every browser version), with manual cookie paste as a fallback.
+// Session setup: sign in to pathofexile.com inside the app. Shows just one
+// action at a time - Sign in when logged out, Sign out when logged in.
 
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -18,6 +18,7 @@ declare global {
       checkForUpdate: () => Promise<
         { available: false; current: string } | { available: true; current: string; latest: string; url: string }
       >
+      reportError: (message: string, stack?: string) => Promise<{ ok: boolean }>
     }
   }
 }
@@ -62,6 +63,15 @@ export function SessionPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Notices (login progress, sign-out confirmation, errors) are transient by
+  // nature - without this they sit there forever and read as the UI being
+  // stuck, especially once the action they describe has long finished.
+  useEffect(() => {
+    if (!notice) return
+    const t = setTimeout(() => setNotice(null), 5000)
+    return () => clearTimeout(t)
+  }, [notice])
+
   const signIn = async () => {
     setBusy(true)
     setNotice({ kind: "warn", text: "Log in to pathofexile.com in the window that opened…" })
@@ -91,19 +101,25 @@ export function SessionPanel({
     }
   }
 
+  const signedIn = Boolean(info?.configured && info?.valid)
+  // Configured but not valid means a session was stored but pathofexile.com
+  // no longer accepts it (expired, revoked) - worth a word before "Sign in"
+  // otherwise looks unchanged from a plain first-time login.
+  const expired = Boolean(info?.configured && info?.valid === false)
+
   return (
     <div className="relative flex items-center gap-2">
-      <StatusPill info={info} />
+      {expired && <Pill tone="error">expired</Pill>}
 
-      {isDesktop && (
-        <Button size="sm" onClick={signIn} disabled={busy}>
+      {isDesktop && !signedIn && (
+        <Button size="sm" onClick={signIn} disabled={busy || info === null}>
           {busy ? "Working…" : "Sign in"}
         </Button>
       )}
 
-      {info?.configured && (
+      {signedIn && (
         <Button size="sm" variant="ghost" onClick={clear} disabled={busy}>
-          Sign out
+          {busy ? "Working…" : "Sign out"}
         </Button>
       )}
 
@@ -122,13 +138,6 @@ export function SessionPanel({
       )}
     </div>
   )
-}
-
-function StatusPill({ info }: { info: SessionInfo | null }) {
-  if (!info) return <Pill tone="muted">checking…</Pill>
-  if (!info.configured) return <Pill tone="muted">not configured</Pill>
-  if (info.valid) return <Pill tone="ok">valid</Pill>
-  return <Pill tone="error">{info.reason ? "invalid" : "unvalidated"}</Pill>
 }
 
 function Pill({ tone, children }: { tone: "ok" | "error" | "muted"; children: React.ReactNode }) {

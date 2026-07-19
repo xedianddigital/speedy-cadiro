@@ -19,6 +19,9 @@ contextBridge.exposeInMainWorld('poeDesktop', {
    */
   checkForUpdate: () => ipcRenderer.invoke('poe:check-update'),
 
+  /** Surface a renderer-side crash in the main process's own logs, so it's diagnosable without DevTools open. */
+  reportError: (message, stack) => ipcRenderer.invoke('poe:report-error', { message, stack }),
+
   /** Run the platform uninstaller, after confirming with the user. */
   uninstall: () => ipcRenderer.invoke('poe:uninstall'),
 

@@ -476,6 +476,11 @@ if (!app.requestSingleInstanceLock()) {
   ipcMain.handle('poe:version', () => app.getVersion())
   ipcMain.handle('poe:uninstall', () => runUninstall())
   ipcMain.handle('poe:check-update', () => checkForUpdate())
+  ipcMain.handle('poe:report-error', (_event, { message, stack }) => {
+    console.error('[renderer]', message)
+    if (stack) console.error(stack)
+    return { ok: true }
+  })
 
   ipcMain.handle('poe:login', async () => {
     try {

@@ -6,6 +6,7 @@ import { SearchPanel } from "@/components/search-panel"
 import { CurrentListing } from "@/components/current-listing"
 import { CooldownBar } from "@/components/cooldown-bar"
 import { OptionsModal } from "@/components/options-modal"
+import { ErrorBoundary } from "@/components/error-boundary"
 import { useLiveFeed } from "@/components/use-live-feed"
 import {
   AUTO_TRAVEL_COOLDOWN_MAX_MS,
@@ -42,6 +43,14 @@ export function Dashboard() {
 
   const feed = useLiveFeed(settings.soundEnabled, settings.soundName)
   const current = feed.listings[0] ?? null
+
+  // Only worth mentioning once the connection has actually dropped after
+  // being up - showing it during the very first, near-instant connect on
+  // launch would just be a flash of noise.
+  const [everConnected, setEverConnected] = useState(false)
+  useEffect(() => {
+    if (feed.connected) setEverConnected(true)
+  }, [feed.connected])
 
   useEffect(() => {
     void (async () => {
@@ -85,23 +94,14 @@ export function Dashboard() {
         </div>
         <div className="flex items-center gap-3">
           <SessionPanel onSessionChange={setSessionReady} />
-          <span
-            className="flex items-center gap-1.5 text-xs text-muted-foreground"
-            title={
-              feed.connected
-                ? "Live connection to the local SpeedyCadiro server is up."
-                : "Reconnecting to the local SpeedyCadiro server…"
-            }
-          >
-            <span
-              className={`h-2 w-2 rounded-full ${
-                feed.connected ? "bg-emerald-500" : "bg-destructive animate-pulse"
-              }`}
-            />
-            {feed.connected ? "app running" : "reconnecting"}
-          </span>
         </div>
       </header>
+
+      {everConnected && !feed.connected && (
+        <p className="mb-4 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+          Reconnecting to the local SpeedyCadiro server…
+        </p>
+      )}
 
       {update && !updateDismissed && (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2.5">
@@ -140,10 +140,7 @@ export function Dashboard() {
 
       <div className="grid gap-4 lg:grid-cols-[20rem_1fr]">
         <div className="space-y-4">
-          <section
-            className="rounded-lg border border-border bg-card px-4 py-2.5"
-            title="After a travel, all searches pause this long so you can finish buying."
-          >
+          <section className="rounded-lg border border-border bg-card px-4 py-2.5">
             <div className="flex items-center justify-between gap-3 text-xs">
               <span className="font-semibold">Travel interval</span>
               <span className="font-medium tabular-nums text-muted-foreground">{intervalSec}s</span>
@@ -157,6 +154,10 @@ export function Dashboard() {
               onChange={(e) => patchSettings({ autoTravelCooldownMs: Number(e.target.value) * 1000 })}
               className="mt-1 w-full accent-emerald-500"
             />
+            <p className="mt-0.5 text-[10.5px] leading-tight text-muted-foreground">
+              How long a match stays on screen, and how long searches pause after each travel so you
+              can finish buying.
+            </p>
           </section>
 
           <SearchPanel statuses={feed.statuses} statusErrors={feed.statusErrors} />
@@ -186,7 +187,22 @@ export function Dashboard() {
 
         <div className="space-y-3">
           <CooldownBar until={feed.cooldownUntil} totalMs={settings.autoTravelCooldownMs} />
-          <CurrentListing listing={current} onWhisperState={feed.setWhisperState} />
+          {/* Keyed by listing id: if this listing's data ever crashes the card,
+              the next different listing remounts a clean instance rather than
+              reusing broken state. */}
+          <ErrorBoundary
+            key={current?.id ?? "none"}
+            fallback={() => (
+              <div className="rounded-xl border border-dashed border-destructive/40 p-6 text-center">
+                <p className="text-sm font-medium text-destructive">Couldn&apos;t display this listing.</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  The rest of the app is unaffected - this clears automatically on the next match.
+                </p>
+              </div>
+            )}
+          >
+            <CurrentListing listing={current} onWhisperState={feed.setWhisperState} />
+          </ErrorBoundary>
         </div>
       </div>
 
