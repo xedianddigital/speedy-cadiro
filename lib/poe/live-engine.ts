@@ -7,6 +7,8 @@
 // reloading doesn't leave orphaned sockets behind.
 
 import { EventEmitter } from "node:events"
+import { promises as fs } from "node:fs"
+import path from "node:path"
 import WebSocket from "ws"
 import {
   AUTO_TRAVEL_COOLDOWN_MAX_MS,
@@ -18,7 +20,7 @@ import {
   type Session,
   type WatchedSearch,
 } from "./types"
-import { getSearches, getSession, getSettings } from "./config"
+import { DATA_DIR, getSearches, getSession, getSettings } from "./config"
 import {
   CloudflareError,
   RateLimitError,
@@ -61,6 +63,18 @@ const EXPIRY_SWEEP_MS = 5_000
  * second whisper for what is, to the user, the exact same match.
  */
 const DUPLICATE_MATCH_WINDOW_MS = 5_000
+
+/**
+ * Optional coordination signal for SixEyesCadiro (the companion market
+ * analyzer): a timestamp file it can poll to hold its own GGG polling right
+ * after a travel, so an analyzer request never lands in the same second as a
+ * snipe. Best-effort and one-directional — coordination must never delay or
+ * fail a travel, and this app has no dependency on the other one existing.
+ */
+function noteTravelForCoordination(): void {
+  const file = path.join(DATA_DIR, "activity.json")
+  void fs.writeFile(file, JSON.stringify({ travelAt: Date.now() }), "utf8").catch(() => {})
+}
 
 interface Connection {
   search: WatchedSearch
@@ -535,6 +549,7 @@ class LiveEngine {
       listing.autoTravelled = true
       this.emit({ type: "whisper", listingId: listing.id, state: "sent" })
       this.log("info", `Auto-travelled: ${listing.itemName || listing.itemType}`)
+      noteTravelForCoordination()
     } catch (err) {
       listing.whisperState = "error"
       this.emit({
@@ -622,6 +637,7 @@ class LiveEngine {
       cached.listing.tokenExpMs = fresh.tokenExpMs
       cached.listing.whisperState = "sent"
       this.emit({ type: "whisper", listingId, state: "sent" })
+      noteTravelForCoordination()
 
       // A manual travel also arms the global cooldown, so auto-travel can't yank
       // the user away while they finish this purchase.

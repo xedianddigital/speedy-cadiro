@@ -15,7 +15,9 @@ import {
 
 // Packaged desktop builds install to a read-only directory, so Electron passes
 // a writable per-user path here. Falls back to ./.data for `pnpm dev`.
-const DATA_DIR = process.env.POE_DATA_DIR
+// Exported so other modules (the SixEyesCadiro coordination signal) can write
+// alongside config.json without duplicating this resolution logic.
+export const DATA_DIR = process.env.POE_DATA_DIR
   ? path.resolve(process.env.POE_DATA_DIR)
   : path.join(process.cwd(), ".data")
 const CONFIG_PATH = path.join(DATA_DIR, "config.json")
