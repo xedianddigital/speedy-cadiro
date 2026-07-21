@@ -154,7 +154,7 @@ export function SearchPanel({
           No searches yet. Paste a live trade search URL above.
         </p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {searches.map((s) => {
             const status = statuses[s.id] ?? (s.active ? "connecting" : "idle")
             return (

@@ -117,6 +117,8 @@ function label(state: WhisperState): string {
       return "Retry travel"
     case "expired":
       return "Listing gone"
+    case "capped":
+      return "Hourly cap hit — travel manually"
     default:
       return "Travel again"
   }

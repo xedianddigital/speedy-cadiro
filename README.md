@@ -44,7 +44,7 @@ GitHub if you'd like to see exactly what it does.
 3. **Wait** — when a listing matches, you're travelled to the seller, the
    purchase window opens, and you buy manually in game.
 
-You can watch up to **5 searches** at once. They all feed one travel: whichever
+You can watch up to **15 searches** at once. They all feed one travel: whichever
 matches first sends you, and every search pauses during the purchase window so a
 second match can't yank you elsewhere mid-trade.
 

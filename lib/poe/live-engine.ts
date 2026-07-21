@@ -11,7 +11,10 @@ import WebSocket from "ws"
 import {
   AUTO_TRAVEL_COOLDOWN_MAX_MS,
   AUTO_TRAVEL_COOLDOWN_MIN_MS,
+  COOLDOWN_JITTER_FRACTION,
   MAX_ACTIVE_SEARCHES,
+  MAX_TRAVELS_PER_HOUR,
+  TRAVEL_HOUR_WINDOW_MS,
   type Listing,
   type SearchStatus,
   type ServerEvent,
@@ -94,6 +97,9 @@ class LiveEngine {
    * only fetching pauses, which costs zero API calls.
    */
   private travelPausedUntil = 0
+
+  /** Timestamps of every travel (auto + manual) in the current rolling hour. */
+  private travelTimestamps: number[] = []
 
   private sweepTimer: NodeJS.Timeout | null = null
 
@@ -247,6 +253,25 @@ class LiveEngine {
       this.emit({ type: "expire", listingId: id })
     }
     this.log("info", "Cooldown reset by user.")
+  }
+
+  // ---- travel-rate backstop ----
+
+  /** Prunes timestamps outside the rolling window and returns how many remain. */
+  private recentTravelCount(): number {
+    const cutoff = Date.now() - TRAVEL_HOUR_WINDOW_MS
+    this.travelTimestamps = this.travelTimestamps.filter((t) => t > cutoff)
+    return this.travelTimestamps.length
+  }
+
+  private recordTravel(): void {
+    this.travelTimestamps.push(Date.now())
+  }
+
+  /** +/- COOLDOWN_JITTER_FRACTION so travel spacing isn't perfectly uniform. */
+  private jitteredCooldown(cooldownMs: number): number {
+    const spread = cooldownMs * COOLDOWN_JITTER_FRACTION
+    return cooldownMs + (Math.random() * 2 - 1) * spread
   }
 
   // ---- socket lifecycle ----
@@ -510,10 +535,30 @@ class LiveEngine {
     if (!conn.search.autoTravel) return
     if (!listing.whisperToken) return
 
+    // Hard backstop: cap total travels (auto + manual) per rolling hour so a
+    // burst of matches can't produce a dense, bot-like teleport cadence. Only
+    // ever suppresses THIS auto-fire - the match still shows and the manual
+    // travel button (see travelTo) stays available as a deliberate call.
+    if (this.recentTravelCount() >= MAX_TRAVELS_PER_HOUR) {
+      listing.whisperState = "capped"
+      this.emit({
+        type: "whisper",
+        listingId: listing.id,
+        state: "capped",
+        message: `Hourly travel cap (${MAX_TRAVELS_PER_HOUR}/hr) reached - travel manually if you want this one.`,
+      })
+      this.log(
+        "warn",
+        `Hourly travel cap reached (${MAX_TRAVELS_PER_HOUR}/hr) - not auto-travelling to ${listing.itemName || listing.itemType}.`,
+      )
+      return
+    }
+
     // Arm the GLOBAL cooldown before the whisper: every search pauses, so a
     // match elsewhere can't travel the user away mid-purchase, and a burst in
-    // flight can't queue a second travel.
-    const cooldown = clampCooldown(settings.autoTravelCooldownMs)
+    // flight can't queue a second travel. Jittered so spacing isn't perfectly
+    // uniform even across allowed travels.
+    const cooldown = this.jitteredCooldown(clampCooldown(settings.autoTravelCooldownMs))
     this.travelPausedUntil = Date.now() + cooldown
     for (const c of this.connections.values()) c.pending = []
     this.emit({ type: "cooldown", until: this.travelPausedUntil })
@@ -533,6 +578,7 @@ class LiveEngine {
       await sendWhisper(session, listing.whisperToken, conn.search.league, conn.search.searchId)
       listing.whisperState = "sent"
       listing.autoTravelled = true
+      this.recordTravel()
       this.emit({ type: "whisper", listingId: listing.id, state: "sent" })
       this.log("info", `Auto-travelled: ${listing.itemName || listing.itemType}`)
     } catch (err) {
@@ -621,12 +667,13 @@ class LiveEngine {
       cached.listing.whisperToken = fresh.whisperToken
       cached.listing.tokenExpMs = fresh.tokenExpMs
       cached.listing.whisperState = "sent"
+      this.recordTravel()
       this.emit({ type: "whisper", listingId, state: "sent" })
 
       // A manual travel also arms the global cooldown, so auto-travel can't yank
       // the user away while they finish this purchase.
       const { autoTravelCooldownMs } = await getSettings()
-      this.travelPausedUntil = Date.now() + clampCooldown(autoTravelCooldownMs)
+      this.travelPausedUntil = Date.now() + this.jitteredCooldown(clampCooldown(autoTravelCooldownMs))
       for (const c of this.connections.values()) c.pending = []
       this.emit({ type: "cooldown", until: this.travelPausedUntil })
       return { ok: true }

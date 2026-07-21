@@ -49,7 +49,7 @@ export interface Settings {
 /** Selectable notification sounds (synthesised in the browser, no assets). */
 export const SOUND_NAMES = ["chime", "ping", "coin", "alert"] as const
 
-export type WhisperState = "idle" | "sending" | "sent" | "error" | "expired"
+export type WhisperState = "idle" | "sending" | "sent" | "error" | "expired" | "capped"
 
 export interface Listing {
   /** PoE listing id (result id from /fetch). */
@@ -97,8 +97,26 @@ export const AUTO_TRAVEL_COOLDOWN_MAX_MS = 90_000
 /**
  * Each watched search is a separate WebSocket to GGG. Running many at once is
  * the clearest bot signal there is, so refuse past this many active at a time.
+ * Raised from the original 5 on the assumption these stay armed only for rare,
+ * low-frequency searches while the user is parked and ready to buy - see the
+ * rolling-hour travel cap below for the backstop against a burst of matches.
  */
-export const MAX_ACTIVE_SEARCHES = 5
+export const MAX_ACTIVE_SEARCHES = 15
+
+/**
+ * Hard backstop against a burst of matches producing a dense, bot-like cadence
+ * of teleports. Deliberately not exposed as a UI setting - it's a floor, not a
+ * tunable, chosen to sit well clear of what earlier testing flagged as the
+ * actually-suspicious pattern (repeated matches every 3-5 minutes for hours).
+ * Counts both auto and manual travels, since GGG's server sees the same
+ * teleport either way - but only ever suppresses the AUTOMATIC trigger. Manual
+ * travel (the deliberate, human-paced action) always stays available.
+ */
+export const MAX_TRAVELS_PER_HOUR = 6
+export const TRAVEL_HOUR_WINDOW_MS = 60 * 60 * 1000
+
+/** Randomised spread applied to the travel cooldown so spacing isn't perfectly uniform. */
+export const COOLDOWN_JITTER_FRACTION = 0.2
 
 // ---- SSE event payloads ----
 
