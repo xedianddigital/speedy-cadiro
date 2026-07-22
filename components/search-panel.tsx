@@ -157,42 +157,46 @@ export function SearchPanel({
           No searches yet. Paste a live trade search URL above.
         </p>
       ) : (
-        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {searches.map((s) => {
             const status = statuses[s.id] ?? (s.active ? "connecting" : "idle")
             return (
-              <li key={s.id} className="flex items-start gap-2 rounded-md border border-border bg-background p-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium">{s.title}</p>
-                  <div className="mt-1">
-                    <StatusDot status={status} active={s.active} />
-                  </div>
+              <li key={s.id} className="rounded-md border border-border bg-background p-2.5">
+                <div className="flex items-start gap-2">
+                  <p className="min-w-0 flex-1 truncate text-xs font-medium">{s.title}</p>
 
-                  {s.active && statusErrors[s.id] && (
-                    <p className="mt-2 rounded bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
-                      {statusErrors[s.id]}
-                    </p>
-                  )}
+                  {/* Vertical close/pause stack, flush to the card's right
+                      edge - keeps every card's action layout identical
+                      whether the title is one line or wraps to two. */}
+                  <div className="flex shrink-0 flex-col items-center gap-1">
+                    <button
+                      onClick={() => remove(s.id)}
+                      title="Remove"
+                      className={`${ICON_BUTTON} hover:border-destructive/50 hover:text-destructive`}
+                    >
+                      ✕
+                    </button>
+                    <button
+                      onClick={() => patch(s.id, { active: !s.active })}
+                      title={s.active ? "Pause" : "Resume"}
+                      className={ICON_BUTTON}
+                    >
+                      {s.active ? "⏸" : "▶"}
+                    </button>
+                  </div>
                 </div>
 
-                {/* Vertical close/pause/open stack, flush to the card's right
-                    edge - keeps every card's action layout identical whether
-                    the title is one line or wraps to two. */}
-                <div className="flex shrink-0 flex-col items-center gap-1">
-                  <button
-                    onClick={() => remove(s.id)}
-                    title="Remove"
-                    className={`${ICON_BUTTON} hover:border-destructive/50 hover:text-destructive`}
-                  >
-                    ✕
-                  </button>
-                  <button
-                    onClick={() => patch(s.id, { active: !s.active })}
-                    title={s.active ? "Pause" : "Resume"}
-                    className={ICON_BUTTON}
-                  >
-                    {s.active ? "⏸" : "▶"}
-                  </button>
+                {s.active && statusErrors[s.id] && (
+                  <p className="mt-2 rounded bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+                    {statusErrors[s.id]}
+                  </p>
+                )}
+
+                {/* Bottom row: status on the left, open on the right - the
+                    same row, so status reads next to where the card links out
+                    rather than sitting stacked under the title. */}
+                <div className="mt-2 flex items-center justify-between">
+                  <StatusDot status={status} active={s.active} />
                   <a
                     href={s.url}
                     target="_blank"
