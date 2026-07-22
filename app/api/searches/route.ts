@@ -44,7 +44,10 @@ export async function POST(req: Request): Promise<Response> {
     league: parsed.league,
     searchId: parsed.searchId,
     title: body.title?.trim() || `${parsed.league} · ${parsed.searchId.slice(0, 6)}`,
-    active: body.active ?? true,
+    // New searches always start paused - the user arms them by hand once
+    // they're ready, rather than a freshly pasted URL immediately opening a
+    // live WebSocket.
+    active: body.active ?? false,
     autoTravel: body.autoTravel ?? true,
   })
 

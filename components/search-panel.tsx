@@ -7,6 +7,9 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { MAX_ACTIVE_SEARCHES, type SearchStatus, type WatchedSearch } from "@/lib/poe/types"
 
+const ICON_BUTTON =
+  "flex h-6 w-6 shrink-0 items-center justify-center rounded border border-input text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+
 export function SearchPanel({
   statuses,
   statusErrors,
@@ -107,7 +110,7 @@ export function SearchPanel({
           onKeyDown={(e) => {
             if (e.key === "Enter" && url.trim() && !busy) void add()
           }}
-          placeholder="https://www.pathofexile.com/trade/search/Mirage/…"
+          placeholder="https://www.pathofexile.com/trade/search/{league}/…"
           spellCheck={false}
           className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring"
         />
@@ -154,47 +157,51 @@ export function SearchPanel({
           No searches yet. Paste a live trade search URL above.
         </p>
       ) : (
-        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           {searches.map((s) => {
             const status = statuses[s.id] ?? (s.active ? "connecting" : "idle")
             return (
-              <li key={s.id} className="rounded-md border border-border bg-background p-2.5">
-                <div className="mb-2 flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-xs font-medium">{s.title}</p>
-                    <p className="truncate font-mono text-[11px] text-muted-foreground">
-                      {s.league} · {s.searchId}
-                    </p>
+              <li key={s.id} className="flex items-start gap-2 rounded-md border border-border bg-background p-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-medium">{s.title}</p>
+                  <div className="mt-1">
+                    <StatusDot status={status} active={s.active} />
                   </div>
-                  <StatusDot status={status} active={s.active} />
+
+                  {s.active && statusErrors[s.id] && (
+                    <p className="mt-2 rounded bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+                      {statusErrors[s.id]}
+                    </p>
+                  )}
                 </div>
 
-                {s.active && statusErrors[s.id] && (
-                  <p className="mb-2 rounded bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
-                    {statusErrors[s.id]}
-                  </p>
-                )}
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button size="sm" variant="outline" onClick={() => patch(s.id, { active: !s.active })}>
-                    {s.active ? "Pause" : "Resume"}
-                  </Button>
-
+                {/* Vertical close/pause/open stack, flush to the card's right
+                    edge - keeps every card's action layout identical whether
+                    the title is one line or wraps to two. */}
+                <div className="flex shrink-0 flex-col items-center gap-1">
+                  <button
+                    onClick={() => remove(s.id)}
+                    title="Remove"
+                    className={`${ICON_BUTTON} hover:border-destructive/50 hover:text-destructive`}
+                  >
+                    ✕
+                  </button>
+                  <button
+                    onClick={() => patch(s.id, { active: !s.active })}
+                    title={s.active ? "Pause" : "Resume"}
+                    className={ICON_BUTTON}
+                  >
+                    {s.active ? "⏸" : "▶"}
+                  </button>
                   <a
                     href={s.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                    title="Open on the trade site"
+                    className={ICON_BUTTON}
                   >
-                    open on site
+                    ↗
                   </a>
-
-                  <button
-                    onClick={() => remove(s.id)}
-                    className="ml-auto text-[11px] text-muted-foreground hover:text-destructive"
-                  >
-                    remove
-                  </button>
                 </div>
               </li>
             )

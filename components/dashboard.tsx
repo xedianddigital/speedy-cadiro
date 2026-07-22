@@ -92,7 +92,7 @@ export function Dashboard() {
   }
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-6">
+    <main className="mx-auto max-w-[1920px] px-4 py-6">
       <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold">
@@ -223,30 +223,25 @@ export function Dashboard() {
 
         <div className="flex flex-col gap-3">
           <CooldownBar until={feed.cooldownUntil} totalMs={settings.autoTravelCooldownMs} />
-          {/* Fixed height reserved up front for the biggest a card gets (long
-              mod list, now internally scroll-capped), so the layout doesn't
-              jump between the empty state, a short card and a long one. */}
-          <div className="min-h-[24rem]">
-            {/* Keyed by listing id: if this listing's data ever crashes the card,
-                the next different listing remounts a clean instance rather than
-                reusing broken state. */}
-            <ErrorBoundary
-              key={current?.id ?? "none"}
-              fallback={(error) => (
-                <div className="rounded-xl border border-dashed border-destructive/40 p-6 text-center">
-                  <p className="text-sm font-medium text-destructive">Couldn&apos;t display this listing.</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    The rest of the app is unaffected - this clears automatically on the next match.
-                  </p>
-                  <p className="mt-2 rounded bg-muted/40 px-2 py-1 font-mono text-[10px] text-muted-foreground">
-                    {error.message}
-                  </p>
-                </div>
-              )}
-            >
-              <CurrentListing listing={current} onWhisperState={feed.setWhisperState} />
-            </ErrorBoundary>
-          </div>
+          {/* Keyed by listing id: if this listing's data ever crashes the card,
+              the next different listing remounts a clean instance rather than
+              reusing broken state. */}
+          <ErrorBoundary
+            key={current?.id ?? "none"}
+            fallback={(error) => (
+              <div className="rounded-xl border border-dashed border-destructive/40 p-6 text-center">
+                <p className="text-sm font-medium text-destructive">Couldn&apos;t display this listing.</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  The rest of the app is unaffected - this clears automatically on the next match.
+                </p>
+                <p className="mt-2 rounded bg-muted/40 px-2 py-1 font-mono text-[10px] text-muted-foreground">
+                  {error.message}
+                </p>
+              </div>
+            )}
+          >
+            <CurrentListing listing={current} onWhisperState={feed.setWhisperState} />
+          </ErrorBoundary>
 
           <SearchPanel statuses={feed.statuses} statusErrors={feed.statusErrors} />
         </div>

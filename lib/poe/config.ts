@@ -34,11 +34,16 @@ async function readConfig(): Promise<AppConfig> {
   try {
     const raw = await fs.readFile(CONFIG_PATH, "utf8")
     const parsed = JSON.parse(raw) as Partial<AppConfig>
+    // Every search comes back paused on a fresh launch, no matter how it was
+    // left last time - a socket that silently resumes from a session the user
+    // forgot was armed is exactly the bot-like pattern this app avoids.
+    const searches = (parsed.searches ?? []).map((s) => ({ ...s, active: false }))
     cache = {
       session: parsed.session ?? null,
-      searches: parsed.searches ?? [],
+      searches,
       settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
     }
+    await persist()
   } catch {
     cache = structuredClone(EMPTY_CONFIG)
   }
